@@ -1,5 +1,5 @@
 import { Worker, Job } from 'bullmq';
-import { prisma } from '@prospector/database';
+import { persistDiscoveryProgress, prisma } from '@prospector/database';
 import { queueOptions, QUEUES } from '@prospector/queues';
 import { GooglePlacesProvider, WhatsAppCloudProvider } from '@prospector/integrations';
 import { calculateLeadScore, logger, normalizePhone, normalizeText, phoneType } from '@prospector/shared';
@@ -30,9 +30,7 @@ async function processRun(job:Job<{runId:string}>){
           await prisma.$transaction(async tx=>{
             const business=await tx.business.upsert({where:{provider_providerId:{provider:item.provider,providerId:item.providerId}},update:{...item,normalizedName,normalizedAddress,normalizedPhone,lastSeenAt:new Date(),siteStatus:site.siteStatus,siteHttpStatus:site.httpStatus,siteResponseMs:site.responseMs,hasHttps:site.hasHttps,pageTitle:site.title,websiteCheckedAt:new Date(),leadScore:score.score,scoreClass:score.scoreClass},create:{...item,normalizedName,normalizedAddress,normalizedPhone,siteStatus:site.siteStatus,siteHttpStatus:site.httpStatus,siteResponseMs:site.responseMs,hasHttps:site.hasHttps,pageTitle:site.title,websiteCheckedAt:new Date(),leadScore:score.score,scoreClass:score.scoreClass}});
             if(normalizedPhone)await tx.businessPhone.upsert({where:{normalizedPhone},update:{businessId:business.id,phone:item.phone!},create:{businessId:business.id,phone:item.phone!,normalizedPhone,type:phoneType(normalizedPhone)}});
-            const discovery=await tx.discoveryEvent.createMany({data:[{runId:run.id,businessId:business.id,cellId:cell.id,wasNew:!existing}],skipDuplicates:true});
-            if(discovery.count)await tx.businessSnapshot.create({data:{businessId:business.id,rating:item.rating,reviewsCount:item.reviewsCount,website:item.website,phone:item.phone}});
-            await tx.processingCheckpoint.upsert({where:{runId_stage_entityType_entityId:{runId:run.id,stage:'DISCOVERY',entityType:'CELL',entityId:cell.id}},update:{page:page+1,processedItems:{increment:discovery.count},status:'RUNNING',metadata:{nextPageToken:found.nextPageToken??null}},create:{runId:run.id,stage:'DISCOVERY',entityType:'CELL',entityId:cell.id,page:page+1,processedItems:discovery.count,status:'RUNNING',metadata:{nextPageToken:found.nextPageToken??null}}});
+            await persistDiscoveryProgress(tx,{runId:run.id,businessId:business.id,cellId:cell.id,wasNew:!existing,page:page+1,nextPageToken:found.nextPageToken,snapshot:{rating:item.rating,reviewsCount:item.reviewsCount,website:item.website,phone:item.phone}});
           });
         }
         page++;token=found.nextPageToken;await prisma.searchCell.update({where:{id:cell.id},data:{currentPage:page,nextPageToken:token,resultsFound:{increment:found.results.length}}});done=!token||page>=3;
