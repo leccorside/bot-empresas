@@ -1,4 +1,7 @@
 import pino from 'pino';
+import { Writable } from 'node:stream';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, renameSync, statSync, unlinkSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { CronExpressionParser } from 'cron-parser';
 
@@ -33,7 +36,70 @@ export function nextScheduleOccurrence(type: string, from: Date, cronExpression?
   return CronExpressionParser.parse(expression, { currentDate: from, tz: timezone }).next().toDate();
 }
 
-export const logger = (service: string) => pino({ level: process.env.LOG_LEVEL ?? 'info', base: { service } });
+const logFiles: Record<string, string> = {
+  api: 'api.log', worker: 'worker.log', scheduler: 'scheduler.log', recovery: 'recovery.log', whatsapp: 'whatsapp.log'
+};
+
+export class RotatingFileStream extends Writable {
+  public readonly filename: string;
+  private readonly maxBytes: number;
+  private readonly maxFiles: number;
+
+  constructor(
+    filename: string,
+    maxBytes = Number(process.env.LOG_MAX_BYTES ?? 10 * 1024 * 1024),
+    maxFiles = Number(process.env.LOG_MAX_FILES ?? 5)
+  ) {
+    super();
+    this.filename = filename;
+    this.maxBytes = maxBytes;
+    this.maxFiles = maxFiles;
+    mkdirSync(dirname(filename), { recursive: true });
+    closeSync(openSync(filename, 'a'));
+  }
+
+  private rotate(incomingBytes: number) {
+    const currentBytes = existsSync(this.filename) ? statSync(this.filename).size : 0;
+    if (currentBytes === 0 || currentBytes + incomingBytes <= Math.max(1, this.maxBytes)) return;
+    const files = Math.max(1, this.maxFiles);
+    const oldest = `${this.filename}.${files}`;
+    if (existsSync(oldest)) unlinkSync(oldest);
+    for (let index = files - 1; index >= 1; index--) {
+      const source = `${this.filename}.${index}`;
+      if (existsSync(source)) renameSync(source, `${this.filename}.${index + 1}`);
+    }
+    if (existsSync(this.filename)) renameSync(this.filename, `${this.filename}.1`);
+    closeSync(openSync(this.filename, 'a'));
+  }
+
+  override _write(chunk: Buffer | string, encoding: BufferEncoding, callback: (error?: Error | null) => void) {
+    try {
+      const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding);
+      this.rotate(data.byteLength);
+      appendFileSync(this.filename, data);
+      callback();
+    } catch (error) {
+      callback(error as Error);
+    }
+  }
+}
+
+export type LoggerOptions = { directory?: string; maxBytes?: number; maxFiles?: number; stdout?: boolean };
+
+export function logger(service: string, options: LoggerOptions = {}) {
+  const directory = options.directory ?? process.env.LOG_DIR ?? '/storage/logs';
+  const maxBytes = options.maxBytes ?? Number(process.env.LOG_MAX_BYTES ?? 10 * 1024 * 1024);
+  const maxFiles = options.maxFiles ?? Number(process.env.LOG_MAX_FILES ?? 5);
+  const safeService = service.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  const streams: pino.StreamEntry[] = [];
+  if (options.stdout !== false) streams.push({ level: 'trace', stream: process.stdout });
+  streams.push({ level: 'trace', stream: new RotatingFileStream(join(directory, logFiles[safeService] ?? `${safeService}.log`), maxBytes, maxFiles) });
+  streams.push({ level: 'error', stream: new RotatingFileStream(join(directory, 'errors.log'), maxBytes, maxFiles) });
+  return pino(
+    { level: process.env.LOG_LEVEL ?? 'info', base: { service } },
+    pino.multistream(streams, { dedupe: false })
+  );
+}
 export const normalizeText = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 export function normalizePhone(value?: string | null): string | null {
   if (!value) return null;

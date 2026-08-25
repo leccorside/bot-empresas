@@ -25,7 +25,7 @@ Sem `GOOGLE_MAPS_API_KEY`, o sistema usa resultados de demonstração determiní
 
 Use `docker compose down` para parar sem apagar dados. Apenas `docker compose down -v` remove volumes. O scheduler reconcilia o estado a cada 30 segundos; apagar o volume Redis não apaga empresas, runs, checkpoints, schedules ou campanhas.
 
-Comandos auxiliares estão no `Makefile`. Logs estruturados vão para stdout (`docker compose logs -f`). Exports ficam no volume `exports_data`; backups usam `scripts/backup.sh` e o volume `backups_data`.
+Comandos auxiliares estão no `Makefile`. Logs estruturados em JSON vão simultaneamente para stdout (`docker compose logs -f`) e para o volume persistente `logs_data`, em `/storage/logs/`: `api.log`, `worker.log`, `scheduler.log`, `recovery.log`, `whatsapp.log` e `errors.log`. A rotação usa 10 MB e cinco históricos por padrão; ajuste `LOG_MAX_BYTES` e `LOG_MAX_FILES` no `.env` quando necessário. Exports ficam no volume `exports_data`; backups usam `scripts/backup.sh` e o volume `backups_data`.
 
 ## Desenvolvimento
 
