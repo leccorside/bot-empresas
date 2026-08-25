@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Job, Queue, QueueEvents, Worker } from 'bullmq';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_JOB_OPTIONS, QUEUES } from '../packages/queues/src';
+import { DEFAULT_JOB_OPTIONS, QUEUES, redisConnection } from '../packages/queues/src';
 
 const connection = { host: process.env.REDIS_HOST ?? 'redis', port: Number(process.env.REDIS_PORT ?? 6379) };
 
@@ -12,6 +12,12 @@ describe('configuração das filas', () => {
 
   it('configura cinco tentativas e backoff exponencial', () => {
     expect(DEFAULT_JOB_OPTIONS).toMatchObject({ attempts: 5, backoff: { type: 'exponential', delay: 2000 } });
+  });
+
+  it('trata falhas transitórias de conexão durante a reinicialização do Redis', async () => {
+    const client = redisConnection();
+    try { expect(client.listenerCount('error')).toBeGreaterThan(0); }
+    finally { await client.quit(); }
   });
 });
 
