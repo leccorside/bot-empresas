@@ -60,6 +60,11 @@ describe('validação dos filtros de empresas', () => {
     expect(businessFilterSchema.parse({ whatsappStatus: 'AVAILABLE', minRating: '3.5', maxRating: '5', minReviews: '10', maxReviews: '100', minScore: '40', maxScore: '80' })).toMatchObject({ whatsappStatus: 'AVAILABLE', minRating: 3.5, maxRating: 5, minReviews: 10, maxReviews: 100, minScore: 40, maxScore: 80 });
   });
 
+  it('aceita filtro por status do CRM e rejeita valores fora do enum', () => {
+    expect(businessFilterSchema.parse({ leadStatus: 'QUALIFIED' })).toMatchObject({ leadStatus: 'QUALIFIED' });
+    expect(() => businessFilterSchema.parse({ leadStatus: 'INVALIDO' })).toThrow();
+  });
+
   it('rejeita faixas invertidas', () => {
     expect(() => businessFilterSchema.parse({ minRating: '5', maxRating: '4' })).toThrow('Faixa de rating inválida');
     expect(() => businessFilterSchema.parse({ minReviews: '100', maxReviews: '10' })).toThrow('Faixa de avaliações inválida');

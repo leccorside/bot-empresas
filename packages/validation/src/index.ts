@@ -28,6 +28,7 @@ export const businessFilterSchema = z.object({
   search: z.string().trim().optional(), city: z.string().optional(), state: z.string().optional(), category: z.string().optional(),
   hasWebsite: queryBoolean.optional(), siteStatus: z.enum(['NO_WEBSITE', 'POOR', 'AVERAGE', 'GOOD', 'UNKNOWN']).optional(),
   hasPhone: queryBoolean.optional(), whatsappStatus: z.enum(['UNKNOWN', 'AVAILABLE', 'NOT_AVAILABLE', 'INVALID']).optional(),
+  leadStatus: z.enum(['NEW', 'QUALIFIED', 'CONTACT_PENDING', 'CONTACTED', 'REPLIED', 'INTERESTED', 'MEETING', 'PROPOSAL', 'CUSTOMER', 'NOT_INTERESTED', 'DO_NOT_CONTACT']).optional(),
   minRating: z.coerce.number().min(0).max(5).optional(), maxRating: z.coerce.number().min(0).max(5).optional(),
   minReviews: z.coerce.number().int().min(0).optional(), maxReviews: z.coerce.number().int().min(0).optional(),
   minScore: z.coerce.number().min(0).max(100).optional(), maxScore: z.coerce.number().min(0).max(100).optional(),

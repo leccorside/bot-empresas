@@ -29,6 +29,10 @@ Sem `PAGESPEED_API_KEY`, o score de performance usa um resultado de demonstraç�
 
 O scheduler também reenfileira automaticamente análises de website concluídas há mais de `WEBSITE_REFRESH_DAYS` dias, em lotes de `WEBSITE_REFRESH_BATCH_SIZE` por ciclo, para manter o Website Analyzer atualizado sem reprocessar sites analisados recentemente.
 
+## CRM
+
+A tela **CRM & Campanhas** mostra o pipeline completo de leads em colunas por status (`NEW → QUALIFIED → CONTACT_PENDING → CONTACTED → REPLIED → INTERESTED → MEETING → PROPOSAL → CUSTOMER`, mais `NOT_INTERESTED`/`DO_NOT_CONTACT` fora do funil ativo). Cada card permite mover o lead para qualquer status (`PATCH /businesses/:id/status`) com uma nota opcional, registrada permanentemente em `LeadEvent`, e visualizar o histórico completo do lead. Marcar `DO_NOT_CONTACT` suprime automaticamente o telefone normalizado em `ContactSuppression`, impedindo inclusão futura em campanhas. Filtre a base de empresas por status do CRM em `GET /businesses?leadStatus=`.
+
 ## Analytics
 
 A tela **Analytics** (`GET /analytics?days=`) mostra crescimento de empresas descobertas por dia, distribuição de Lead Score, funil de status do CRM, status de site e telefones por WhatsApp, além dos rankings por categoria e cidade — tudo calculado sob demanda a partir do PostgreSQL, sem tabelas ou jobs adicionais. O período é configurável (7 a 180 dias, padrão 30).
