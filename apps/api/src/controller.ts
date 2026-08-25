@@ -11,6 +11,7 @@ export class ApiController {
   @Post('runs') createRun(@Body() body:any){return this.service.createRun(body)}
   @Post('runs/:id/:action') runAction(@Param('id') id:string,@Param('action') action:string){return this.service.runAction(id,action)}
   @Get('businesses') businesses(@Query() query:any){return this.service.businesses(query)}
+  @Get('businesses/filter-options') businessFilterOptions(){return this.service.businessFilterOptions()}
   @Get('businesses/:id') business(@Param('id') id:string){return this.service.business(id)}
   @Patch('businesses/:id/status') leadStatus(@Param('id') id:string,@Body() body:any){return this.service.leadStatus(id,body)}
   @Get('schedules') schedules(){return this.service.schedules()}

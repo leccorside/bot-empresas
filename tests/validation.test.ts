@@ -42,4 +42,18 @@ describe('validação dos filtros de empresas', () => {
     expect(() => businessFilterSchema.parse({ minScore: '101' })).toThrow();
     expect(() => businessFilterSchema.parse({ pageSize: '201' })).toThrow();
   });
+
+  it('converte filtros booleanos sem confundir false com true', () => {
+    expect(businessFilterSchema.parse({ hasWebsite: 'false', hasPhone: 'true' })).toMatchObject({ hasWebsite: false, hasPhone: true });
+  });
+
+  it('aceita filtros de WhatsApp, rating, avaliações e score', () => {
+    expect(businessFilterSchema.parse({ whatsappStatus: 'AVAILABLE', minRating: '3.5', maxRating: '5', minReviews: '10', maxReviews: '100', minScore: '40', maxScore: '80' })).toMatchObject({ whatsappStatus: 'AVAILABLE', minRating: 3.5, maxRating: 5, minReviews: 10, maxReviews: 100, minScore: 40, maxScore: 80 });
+  });
+
+  it('rejeita faixas invertidas', () => {
+    expect(() => businessFilterSchema.parse({ minRating: '5', maxRating: '4' })).toThrow('Faixa de rating inválida');
+    expect(() => businessFilterSchema.parse({ minReviews: '100', maxReviews: '10' })).toThrow('Faixa de avaliações inválida');
+    expect(() => businessFilterSchema.parse({ minScore: '80', maxScore: '40' })).toThrow('Faixa de score inválida');
+  });
 });
