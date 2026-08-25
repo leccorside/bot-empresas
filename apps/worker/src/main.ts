@@ -1,5 +1,5 @@
 import { Worker, Job } from 'bullmq';
-import { persistDiscoveryProgress, prisma } from '@prospector/database';
+import { persistDiscoveryProgress, prisma, recordServiceHeartbeat } from '@prospector/database';
 import { queueOptions, QUEUES } from '@prospector/queues';
 import { GooglePlacesProvider, WhatsAppCloudProvider } from '@prospector/integrations';
 import { calculateLeadScore, logger, normalizePhone, normalizeText, phoneType } from '@prospector/shared';
@@ -47,5 +47,7 @@ async function processCampaign(job:Job<{campaignId:string}>){const campaign=awai
 const prospectWorker=new Worker(QUEUES.prospecting,processRun,{...queueOptions(),concurrency:Number(process.env.WORKER_CONCURRENCY??5),limiter:{max:Number(process.env.MAX_REQUESTS_PER_SECOND??5),duration:1000}});
 const campaignWorker=new Worker(QUEUES.campaign,processCampaign,{...queueOptions(),concurrency:1});
 for(const worker of [prospectWorker,campaignWorker]){worker.on('active',j=>prisma.jobRecord.updateMany({where:{bullJobId:j.id},data:{state:'ACTIVE',startedAt:new Date(),attempts:{increment:1}}}).catch(()=>{}));worker.on('failed',(j,e)=>log.error({jobId:j?.id,error:e.message},'job failed'))}
-async function shutdown(signal:string){log.info({signal},'graceful shutdown');await Promise.all([prospectWorker.close(),campaignWorker.close()]);await prisma.$disconnect();process.exit(0)}
+const serviceHeartbeatTimer=setInterval(()=>recordServiceHeartbeat('worker').catch(error=>log.error({error:error.message},'worker heartbeat failed')),15000);
+recordServiceHeartbeat('worker').catch(error=>log.error({error:error.message},'worker heartbeat failed'));
+async function shutdown(signal:string){log.info({signal},'graceful shutdown');clearInterval(serviceHeartbeatTimer);await Promise.all([prospectWorker.close(),campaignWorker.close()]);await prisma.$disconnect();process.exit(0)}
 process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));log.info('worker online');

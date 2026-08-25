@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest';
-import {calculateLeadScore,normalizePhone,normalizeText,phoneType} from '../packages/shared/src';
+import {calculateLeadScore,heartbeatStatus,normalizePhone,normalizeText,phoneType} from '../packages/shared/src';
 describe('normalização e score',()=>{
   it('normaliza nomes para deduplicação',()=>expect(normalizeText('Clínica São José!')).toBe('clinica sao jose'));
   it('remove espaços e símbolos repetidos',()=>expect(normalizeText('  Alfa---Beta & Cia.  ')).toBe('alfa beta cia'));
@@ -14,4 +14,11 @@ describe('normalização e score',()=>{
   it('pontua ausência de site e avaliações',()=>expect(calculateLeadScore({reviewsCount:0})).toEqual({score:65,scoreClass:'HIGH'}));
   it('pontua site ruim, lento e sem HTTPS',()=>expect(calculateLeadScore({website:'http://example.test',siteStatus:'POOR',reviewsCount:50,siteResponseMs:4000,hasHttps:false})).toEqual({score:50,scoreClass:'MEDIUM'}));
   it('não penaliza site saudável com muitas avaliações',()=>expect(calculateLeadScore({website:'https://example.test',siteStatus:'GOOD',reviewsCount:150,siteResponseMs:500,hasHttps:true})).toEqual({score:0,scoreClass:'LOW'}));
+});
+
+describe('saúde por heartbeat',()=>{
+  const now=new Date('2026-08-25T12:00:00.000Z');
+  it('considera online um heartbeat recente',()=>expect(heartbeatStatus({status:'ONLINE',heartbeatAt:'2026-08-25T11:59:30.000Z'},45000,now)).toBe('ONLINE'));
+  it('considera offline um heartbeat vencido',()=>expect(heartbeatStatus({status:'ONLINE',heartbeatAt:'2026-08-25T11:58:00.000Z'},45000,now)).toBe('OFFLINE'));
+  it('considera offline dados ausentes ou inválidos',()=>{expect(heartbeatStatus(null,45000,now)).toBe('OFFLINE');expect(heartbeatStatus({status:'ONLINE',heartbeatAt:'inválido'},45000,now)).toBe('OFFLINE')});
 });

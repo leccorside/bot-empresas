@@ -27,3 +27,14 @@ export function calculateLeadScore(input: LeadScoreInput) {
   return { score, scoreClass } as const;
 }
 export const terminalRunStates = ['COMPLETED', 'FAILED', 'CANCELLED'] as const;
+
+export function heartbeatStatus(value: unknown, maxAgeMs: number, now = new Date()): 'ONLINE' | 'OFFLINE' {
+  if (!value || typeof value !== 'object') return 'OFFLINE';
+  const heartbeatAt = (value as { heartbeatAt?: unknown }).heartbeatAt;
+  const declaredStatus = (value as { status?: unknown }).status;
+  if (declaredStatus !== 'ONLINE' || typeof heartbeatAt !== 'string') return 'OFFLINE';
+  const timestamp = Date.parse(heartbeatAt);
+  if (!Number.isFinite(timestamp)) return 'OFFLINE';
+  const age = now.getTime() - timestamp;
+  return age >= -maxAgeMs && age <= maxAgeMs ? 'ONLINE' : 'OFFLINE';
+}

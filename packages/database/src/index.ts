@@ -3,6 +3,15 @@ const root = globalThis as unknown as { prisma?: PrismaClient };
 export const prisma = root.prisma ?? new PrismaClient({ log: ['error', 'warn'] });
 if (process.env.NODE_ENV !== 'production') root.prisma = prisma;
 
+export async function recordServiceHeartbeat(service: string, at = new Date()) {
+  const value = { status: 'ONLINE', heartbeatAt: at.toISOString() };
+  await prisma.systemSetting.upsert({
+    where: { key: `service:${service}` },
+    update: { value },
+    create: { key: `service:${service}`, value },
+  });
+}
+
 export type DiscoveryProgressInput = {
   runId: string;
   businessId: string;
