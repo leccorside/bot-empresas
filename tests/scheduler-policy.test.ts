@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { heartbeatCutoff, nextOccurrence, shouldRemoveQueuedJob } from '../apps/scheduler/src/policy';
+import { validateCronExpression, validateTimezone } from '../packages/shared/src';
 
 describe('política de agendamento', () => {
   const base = new Date('2026-08-25T12:00:00.000Z');
@@ -12,6 +13,23 @@ describe('política de agendamento', () => {
     expect(nextOccurrence('DAILY', base)?.toISOString()).toBe('2026-08-26T12:00:00.000Z');
     expect(nextOccurrence('WEEKLY', base)?.toISOString()).toBe('2026-09-01T12:00:00.000Z');
     expect(nextOccurrence('MONTHLY', base)?.toISOString()).toBe('2026-09-25T12:00:00.000Z');
+  });
+
+  it('calcula CRON e dias específicos no fuso configurado', () => {
+    expect(nextOccurrence('CRON', base, '0 10 * * *', 'America/Sao_Paulo')?.toISOString()).toBe('2026-08-25T13:00:00.000Z');
+    expect(nextOccurrence('SPECIFIC_DAYS', base, '0 10 * * 2,4', 'America/Sao_Paulo')?.toISOString()).toBe('2026-08-25T13:00:00.000Z');
+  });
+
+  it('preserva o horário local ao atravessar o horário de verão', () => {
+    const beforeDst = new Date('2026-03-07T14:00:00.000Z');
+    expect(nextOccurrence('DAILY', beforeDst, null, 'America/New_York')?.toISOString()).toBe('2026-03-08T13:00:00.000Z');
+  });
+
+  it('valida fuso horário e expressão CRON', () => {
+    expect(validateTimezone('America/Sao_Paulo')).toBe(true);
+    expect(validateTimezone('Fuso/Inexistente')).toBe(false);
+    expect(validateCronExpression('0 9 * * 1-5')).toBe(true);
+    expect(validateCronExpression('cron inválido')).toBe(false);
   });
 });
 

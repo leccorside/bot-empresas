@@ -27,6 +27,15 @@ describe('validação de agendamentos', () => {
   it('rejeita tipo de agendamento desconhecido', () => {
     expect(() => createScheduleSchema.parse({ name: 'Inválido', state: 'GO', city: 'Goiânia', scheduleType: 'HOURLY' })).toThrow();
   });
+
+  it('exige CRON para tipos baseados em expressão', () => {
+    expect(() => createScheduleSchema.parse({ name: 'Dias úteis', state: 'GO', city: 'Goiânia', scheduleType: 'SPECIFIC_DAYS' })).toThrow('Expressão CRON obrigatória');
+    expect(createScheduleSchema.parse({ name: 'Dias úteis', state: 'GO', city: 'Goiânia', scheduleType: 'SPECIFIC_DAYS', cronExpression: '0 9 * * 1-5' }).timezone).toBe('America/Sao_Paulo');
+  });
+
+  it('exige data inicial para recorrências simples', () => {
+    expect(() => createScheduleSchema.parse({ name: 'Diário', state: 'GO', city: 'Goiânia', scheduleType: 'DAILY' })).toThrow('Próxima execução obrigatória');
+  });
 });
 
 describe('validação dos filtros de empresas', () => {

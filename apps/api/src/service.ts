@@ -5,7 +5,7 @@ import ExcelJS from 'exceljs';
 import { randomUUID } from 'crypto';
 import { prisma } from '@prospector/database';
 import { enqueueRun, prospectingQueue, campaignQueue } from '@prospector/queues';
-import { heartbeatStatus } from '@prospector/shared';
+import { heartbeatStatus, nextScheduleOccurrence, validateCronExpression, validateTimezone } from '@prospector/shared';
 import { businessFilterSchema, createRunSchema, createScheduleSchema } from '@prospector/validation';
 
 @Injectable()
@@ -21,9 +21,21 @@ export class ApiService {
   async business(id:string){const item=await prisma.business.findUnique({where:{id},include:{phones:true,snapshots:{orderBy:{capturedAt:'desc'},take:20},leadEvents:{orderBy:{createdAt:'desc'}}}});if(!item)throw new NotFoundException();return item}
   async leadStatus(id:string,body:any){const current=await prisma.business.findUnique({where:{id}});if(!current)throw new NotFoundException();return prisma.$transaction(async tx=>{const updated=await tx.business.update({where:{id},data:{leadStatus:body.status}});await tx.leadEvent.create({data:{businessId:id,fromStatus:current.leadStatus,toStatus:body.status,note:body.note}});if(body.status==='DO_NOT_CONTACT'&&current.normalizedPhone)await tx.contactSuppression.upsert({where:{normalizedPhone:current.normalizedPhone},update:{reason:body.note??'Opt-out'},create:{businessId:id,normalizedPhone:current.normalizedPhone,reason:body.note??'Opt-out'}});return updated})}
   schedules(){return prisma.schedule.findMany({orderBy:{createdAt:'desc'}})}
-  createSchedule(raw:any){const body=createScheduleSchema.parse(raw);return prisma.schedule.create({data:body as any})}
-  updateSchedule(id:string,body:any){return prisma.schedule.update({where:{id},data:body})}
-  deleteSchedule(id:string){return prisma.schedule.delete({where:{id}})}
+  async createSchedule(raw:any){const body=this.parseSchedule(raw);return prisma.schedule.create({data:this.normalizeSchedule(body) as any})}
+  async updateSchedule(id:string,raw:any){const current=await prisma.schedule.findUnique({where:{id}});if(!current)throw new NotFoundException('Agendamento não encontrado');const body=this.parseSchedule({...current,...raw});return prisma.schedule.update({where:{id},data:this.normalizeSchedule(body) as any})}
+  async deleteSchedule(id:string){const current=await prisma.schedule.findUnique({where:{id}});if(!current)throw new NotFoundException('Agendamento não encontrado');return prisma.schedule.delete({where:{id}})}
+  private parseSchedule(raw:any){const parsed=createScheduleSchema.safeParse(raw);if(!parsed.success)throw new BadRequestException({message:'Agendamento inválido',issues:parsed.error.issues.map(issue=>({field:issue.path.join('.'),message:issue.message}))});return parsed.data}
+  private normalizeSchedule(body:any){
+    if(!validateTimezone(body.timezone))throw new BadRequestException('Fuso horário inválido');
+    const cronBased=['CRON','SPECIFIC_DAYS'].includes(body.scheduleType);
+    if(cronBased&&!validateCronExpression(body.cronExpression,body.timezone))throw new BadRequestException('Expressão CRON inválida');
+    let nextRunAt:Date|null=body.nextRunAt??null;
+    const now=new Date();
+    if(cronBased)nextRunAt=nextScheduleOccurrence(body.scheduleType,now,body.cronExpression,body.timezone);
+    else if(body.scheduleType==='ONCE'&&nextRunAt&&nextRunAt<=now)throw new BadRequestException('A execução única deve estar no futuro');
+    else if(nextRunAt&&nextRunAt<=now)nextRunAt=nextScheduleOccurrence(body.scheduleType,now,null,body.timezone,nextRunAt);
+    return{...body,cronExpression:cronBased?body.cronExpression:null,nextRunAt};
+  }
   jobs(){return prisma.jobRecord.findMany({orderBy:{createdAt:'desc'},take:200,include:{run:{select:{city:true,state:true,status:true}}}})}
   async jobAction(id:string,action:string){const job=await prisma.jobRecord.findUnique({where:{id}});if(!job)throw new NotFoundException();if(action==='retry'&&job.runId){await prisma.jobRecord.update({where:{id},data:{state:'RECOVERING',errorMessage:null}});await enqueueRun(job.runId);return{ok:true}}if(action==='cancel')return prisma.jobRecord.update({where:{id},data:{state:'CANCELLED'}});throw new BadRequestException('Ação inválida')}
   campaigns(){return prisma.campaign.findMany({orderBy:{createdAt:'desc'},include:{_count:{select:{messages:true}}}})}
