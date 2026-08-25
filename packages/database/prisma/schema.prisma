@@ -180,6 +180,13 @@ model ProspectingRun {
   withoutWebsite Int @default(0)
   phonesFound Int @default(0)
   whatsappFound Int @default(0)
+  boundarySouth Float?
+  boundaryNorth Float?
+  boundaryWest Float?
+  boundaryEast Float?
+  gridCellSizeMeters Int @default(5000)
+  gridCellsTotal Int @default(0)
+  gridCellsCompleted Int @default(0)
   currentStage String @default("PENDING")
   errorMessage String?
   createdAt DateTime @default(now())
@@ -196,9 +203,14 @@ model SearchCell {
   id String @id @default(cuid())
   runId String
   run ProspectingRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  sequence Int @default(0)
   latitude Float
   longitude Float
   radius Int @default(5000)
+  southLatitude Float?
+  northLatitude Float?
+  westLongitude Float?
+  eastLongitude Float?
   category String
   status CellStatus @default(PENDING)
   currentPage Int @default(0)
@@ -207,6 +219,7 @@ model SearchCell {
   startedAt DateTime?
   completedAt DateTime?
   @@unique([runId, latitude, longitude, category])
+  @@unique([runId, sequence, category])
   @@index([runId, status])
 }
 

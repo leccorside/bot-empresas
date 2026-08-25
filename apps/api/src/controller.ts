@@ -9,6 +9,7 @@ export class ApiController {
   @Get('dashboard') dashboard(){return this.service.dashboard()}
   @Get('runs') runs(){return this.service.runs()}
   @Post('runs') createRun(@Body() body:any){return this.service.createRun(body)}
+  @Get('runs/:id/cells') runCells(@Param('id') id:string){return this.service.runCells(id)}
   @Post('runs/:id/:action') runAction(@Param('id') id:string,@Param('action') action:string){return this.service.runAction(id,action)}
   @Get('businesses') businesses(@Query() query:any){return this.service.businesses(query)}
   @Get('businesses/filter-options') businessFilterOptions(){return this.service.businessFilterOptions()}

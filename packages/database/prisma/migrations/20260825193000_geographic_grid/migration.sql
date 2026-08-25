@@ -1,0 +1,17 @@
+ALTER TABLE "ProspectingRun"
+ADD COLUMN "boundarySouth" DOUBLE PRECISION,
+ADD COLUMN "boundaryNorth" DOUBLE PRECISION,
+ADD COLUMN "boundaryWest" DOUBLE PRECISION,
+ADD COLUMN "boundaryEast" DOUBLE PRECISION,
+ADD COLUMN "gridCellSizeMeters" INTEGER NOT NULL DEFAULT 5000,
+ADD COLUMN "gridCellsTotal" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN "gridCellsCompleted" INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE "SearchCell"
+ADD COLUMN "sequence" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN "southLatitude" DOUBLE PRECISION,
+ADD COLUMN "northLatitude" DOUBLE PRECISION,
+ADD COLUMN "westLongitude" DOUBLE PRECISION,
+ADD COLUMN "eastLongitude" DOUBLE PRECISION;
+
+CREATE UNIQUE INDEX "SearchCell_runId_sequence_category_key" ON "SearchCell"("runId", "sequence", "category");

@@ -1,18 +1,49 @@
+import type { GeographicBounds } from '@prospector/shared';
+
 export type DiscoveredBusiness = { provider: string; providerId: string; name: string; category: string; address?: string; city: string; state: string; country: string; latitude?: number; longitude?: number; website?: string; phone?: string; rating?: number; reviewsCount?: number; mapsUrl?: string };
-export interface BusinessDiscoveryProvider { discover(input: { country: string; state: string; city: string; category: string; pageToken?: string }): Promise<{ results: DiscoveredBusiness[]; nextPageToken?: string }> }
+export type BusinessDiscoveryInput = { country: string; state: string; city: string; category: string; pageToken?: string; bounds?: GeographicBounds };
+export type LocationInput = { country: string; state: string; city: string };
+export interface BusinessDiscoveryProvider {
+  resolveBoundary(input: LocationInput): Promise<GeographicBounds>;
+  discover(input: BusinessDiscoveryInput): Promise<{ results: DiscoveredBusiness[]; nextPageToken?: string }>;
+}
 
 export class GooglePlacesProvider implements BusinessDiscoveryProvider {
   private readonly key: string | undefined;
   constructor(key = process.env.GOOGLE_MAPS_API_KEY) { this.key = key; }
-  async discover(input: { country: string; state: string; city: string; category: string; pageToken?: string }): Promise<{ results: DiscoveredBusiness[]; nextPageToken?: string }> {
-    if (!this.key) return this.demo(input);
-    const query = `${input.category === 'Todos' ? 'empresas' : input.category} em ${input.city}, ${input.state}, ${input.country}`;
-    const response = await fetch('https://places.googleapis.com/v1/places:searchText', { method: 'POST', headers: { 'Content-Type':'application/json', 'X-Goog-Api-Key': this.key, 'X-Goog-FieldMask':'places.id,places.displayName,places.formattedAddress,places.location,places.websiteUri,places.nationalPhoneNumber,places.rating,places.userRatingCount,places.googleMapsUri,nextPageToken' }, body: JSON.stringify({ textQuery: query, pageToken: input.pageToken, languageCode:'pt-BR', regionCode:'BR', pageSize:20 }) });
+  private async request(body: Record<string, unknown>, fieldMask: string) {
+    const response = await fetch('https://places.googleapis.com/v1/places:searchText', { method: 'POST', headers: { 'Content-Type':'application/json', 'X-Goog-Api-Key': this.key!, 'X-Goog-FieldMask':fieldMask }, body: JSON.stringify(body) });
     if (!response.ok) throw new Error(`Google Places respondeu ${response.status}: ${await response.text()}`);
-    const data = await response.json() as any;
+    return response.json() as Promise<any>;
+  }
+  async resolveBoundary(input: LocationInput): Promise<GeographicBounds> {
+    if (!this.key) return this.demoBoundary(input);
+    const data = await this.request(
+      { textQuery:`${input.city}, ${input.state}, ${input.country}`, languageCode:'pt-BR', regionCode:'BR', pageSize:5 },
+      'places.id,places.displayName,places.location,places.viewport,places.types'
+    );
+    const place = (data.places ?? []).find((candidate:any) => candidate.viewport?.low && candidate.viewport?.high && (candidate.types ?? []).some((type:string) => ['locality','administrative_area_level_2','administrative_area_level_3'].includes(type)))
+      ?? (data.places ?? []).find((candidate:any) => candidate.viewport?.low && candidate.viewport?.high);
+    if (!place) throw new Error(`Google Places não retornou limites geográficos para ${input.city}/${input.state}`);
+    return { south:Number(place.viewport.low.latitude), north:Number(place.viewport.high.latitude), west:Number(place.viewport.low.longitude), east:Number(place.viewport.high.longitude) };
+  }
+  async discover(input: BusinessDiscoveryInput): Promise<{ results: DiscoveredBusiness[]; nextPageToken?: string }> {
+    if (!this.key) return this.demo(input);
+    const query = input.bounds ? (input.category === 'Todos' ? 'empresas' : input.category) : `${input.category === 'Todos' ? 'empresas' : input.category} em ${input.city}, ${input.state}, ${input.country}`;
+    const locationRestriction = input.bounds ? { rectangle:{ low:{latitude:input.bounds.south,longitude:input.bounds.west}, high:{latitude:input.bounds.north,longitude:input.bounds.east} } } : undefined;
+    const data = await this.request(
+      { textQuery:query, pageToken:input.pageToken, languageCode:'pt-BR', regionCode:'BR', pageSize:20, locationRestriction },
+      'places.id,places.displayName,places.formattedAddress,places.location,places.websiteUri,places.nationalPhoneNumber,places.rating,places.userRatingCount,places.googleMapsUri,nextPageToken'
+    );
     return { results: (data.places ?? []).map((p:any) => ({ provider:'GOOGLE', providerId:p.id, name:p.displayName?.text ?? 'Sem nome', category:input.category, address:p.formattedAddress, city:input.city, state:input.state, country:input.country, latitude:p.location?.latitude, longitude:p.location?.longitude, website:p.websiteUri, phone:p.nationalPhoneNumber, rating:p.rating, reviewsCount:p.userRatingCount, mapsUrl:p.googleMapsUri })), nextPageToken:data.nextPageToken };
   }
-  private async demo(input: { country:string; state:string; city:string; category:string; pageToken?:string }): Promise<{ results: DiscoveredBusiness[]; nextPageToken?: string }> {
+  private demoBoundary(input: LocationInput): GeographicBounds {
+    const hash = [...`${input.city}|${input.state}|${input.country}`].reduce((total, character) => (total * 31 + character.charCodeAt(0)) >>> 0, 7);
+    const latitude = -30 + (hash % 2_000) / 100;
+    const longitude = -60 + (Math.floor(hash / 2_000) % 2_000) / 100;
+    return { south:latitude - 0.03, north:latitude + 0.03, west:longitude - 0.03, east:longitude + 0.03 };
+  }
+  private async demo(input: BusinessDiscoveryInput): Promise<{ results: DiscoveredBusiness[]; nextPageToken?: string }> {
     if (input.pageToken) return { results: [], nextPageToken: undefined };
     const seed = `${input.city}-${input.category}`.toLowerCase().replace(/\s/g,'-');
     const categories = input.category === 'Todos' ? ['Restaurante','Academia','Clínica','Hotel','Imobiliária'] : [input.category];

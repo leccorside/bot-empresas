@@ -17,6 +17,15 @@ describe('GooglePlacesProvider', () => {
     expect(first).toEqual(second);
     expect(first.results).toHaveLength(3);
     expect(first.results.every(item => item.provider === 'DEMO')).toBe(true);
+    await expect(provider.resolveBoundary({ country: 'Brasil', state: 'GO', city: 'Goiânia' })).resolves.toEqual(await provider.resolveBoundary({ country: 'Brasil', state: 'GO', city: 'Goiânia' }));
+  });
+
+  it('resolve o bounding box oficial da cidade', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ places: [{ id: 'city-1', types: ['locality'], viewport: { low: { latitude: -16.8, longitude: -49.4 }, high: { latitude: -16.5, longitude: -49.1 } } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(new GooglePlacesProvider('fake-key').resolveBoundary({ country: 'Brasil', state: 'GO', city: 'Goiânia' })).resolves.toEqual({ south: -16.8, north: -16.5, west: -49.4, east: -49.1 });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ textQuery: 'Goiânia, GO, Brasil', pageSize: 5 });
+    expect(fetchMock.mock.calls[0][1].headers['X-Goog-FieldMask']).toContain('places.viewport');
   });
 
   it('mapeia resposta oficial e envia token de paginação', async () => {
@@ -31,6 +40,13 @@ describe('GooglePlacesProvider', () => {
     const request = fetchMock.mock.calls[0];
     expect(request[0]).toBe('https://places.googleapis.com/v1/places:searchText');
     expect(JSON.parse(request[1].body)).toMatchObject({ pageToken: 'current-token', languageCode: 'pt-BR', regionCode: 'BR', pageSize: 20 });
+  });
+
+  it('restringe a busca aos limites exatos da célula', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ places: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    await new GooglePlacesProvider('fake-key').discover({ country: 'Brasil', state: 'GO', city: 'Goiânia', category: 'Clínicas', bounds: { south: -16.7, north: -16.6, west: -49.3, east: -49.2 } });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ textQuery: 'Clínicas', locationRestriction: { rectangle: { low: { latitude: -16.7, longitude: -49.3 }, high: { latitude: -16.6, longitude: -49.2 } } } });
   });
 
   it('propaga erro HTTP do Google sem ocultar o status', async () => {

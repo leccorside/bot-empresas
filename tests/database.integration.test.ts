@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { persistDiscoveryProgress, prisma } from '../packages/database/src';
+import { generateGeographicGrid } from '../packages/shared/src';
 
 const createdRunIds: string[] = [];
 const createdBusinessIds: string[] = [];
@@ -72,5 +73,20 @@ describe('persistência e idempotência no PostgreSQL', () => {
     const id = `test-export-${randomUUID()}`; createdExportIds.push(id);
     await prisma.exportRecord.create({ data: { id, format: 'CSV', status: 'COMPLETED', filename: `${id}.csv`, storagePath: `/storage/exports/${id}.csv`, mimeType: 'text/csv', sizeBytes: 128, rowCount: 3, filters: { city: 'Goiânia' }, completedAt: new Date() } });
     await expect(prisma.exportRecord.findUnique({ where: { id } })).resolves.toMatchObject({ status: 'COMPLETED', rowCount: 3, sizeBytes: 128 });
+  });
+
+  it('persiste células ordenadas e permite retomar somente as pendentes', async () => {
+    const suffix = randomUUID();
+    const runId = `test-grid-run-${suffix}`;
+    createdRunIds.push(runId);
+    const bounds = { south: -16.72, north: -16.62, west: -49.32, east: -49.22 };
+    const cells = generateGeographicGrid(bounds, 5_000, 20);
+    await prisma.prospectingRun.create({ data: { id: runId, country: 'Brasil', state: 'GO', city: 'Cidade Grid', category: 'Clínicas', status: 'RUNNING', idempotencyKey: `grid:${suffix}`, boundarySouth: bounds.south, boundaryNorth: bounds.north, boundaryWest: bounds.west, boundaryEast: bounds.east, gridCellsTotal: cells.length } });
+    await prisma.searchCell.createMany({ data: cells.map(cell => ({ runId, category: 'Clínicas', sequence: cell.sequence, latitude: cell.latitude, longitude: cell.longitude, radius: cell.radius, southLatitude: cell.south, northLatitude: cell.north, westLongitude: cell.west, eastLongitude: cell.east })) });
+    await prisma.searchCell.updateMany({ where: { runId, sequence: 0 }, data: { status: 'COMPLETED', completedAt: new Date() } });
+    const pending = await prisma.searchCell.findMany({ where: { runId, status: { not: 'COMPLETED' } }, orderBy: { sequence: 'asc' } });
+    expect(pending).toHaveLength(cells.length - 1);
+    expect(pending[0].sequence).toBe(1);
+    expect(pending[0]).toMatchObject({ southLatitude: cells[1].south, northLatitude: cells[1].north, westLongitude: cells[1].west, eastLongitude: cells[1].east });
   });
 });

@@ -100,6 +100,77 @@ export function logger(service: string, options: LoggerOptions = {}) {
     pino.multistream(streams, { dedupe: false })
   );
 }
+
+export type GeographicBounds = {
+  south: number;
+  north: number;
+  west: number;
+  east: number;
+};
+
+export type GeographicGridCell = GeographicBounds & {
+  sequence: number;
+  latitude: number;
+  longitude: number;
+  radius: number;
+};
+
+const METERS_PER_LATITUDE_DEGREE = 111_320;
+const coordinate = (value: number) => Number(value.toFixed(7));
+
+export function validateGeographicBounds(bounds: GeographicBounds) {
+  const values = [bounds.south, bounds.north, bounds.west, bounds.east];
+  if (!values.every(Number.isFinite)) throw new Error('Limites geográficos inválidos');
+  if (bounds.south < -90 || bounds.north > 90 || bounds.south >= bounds.north) throw new Error('Intervalo de latitude inválido');
+  if (bounds.west < -180 || bounds.east > 180 || bounds.west >= bounds.east) throw new Error('Intervalo de longitude inválido');
+  return bounds;
+}
+
+export function generateGeographicGrid(bounds: GeographicBounds, requestedCellSizeMeters = 5_000, requestedMaxCells = 500): GeographicGridCell[] {
+  validateGeographicBounds(bounds);
+  const cellSizeMeters = Math.max(500, Math.floor(requestedCellSizeMeters));
+  const maxCells = Math.max(1, Math.floor(requestedMaxCells));
+  const latitudeSpan = bounds.north - bounds.south;
+  const longitudeSpan = bounds.east - bounds.west;
+  const middleLatitudeRadians = ((bounds.south + bounds.north) / 2) * Math.PI / 180;
+  const metersPerLongitudeDegree = Math.max(1, METERS_PER_LATITUDE_DEGREE * Math.cos(middleLatitudeRadians));
+  const heightMeters = latitudeSpan * METERS_PER_LATITUDE_DEGREE;
+  const widthMeters = longitudeSpan * metersPerLongitudeDegree;
+  let effectiveCellSize = cellSizeMeters;
+  let rows = Math.max(1, Math.ceil(heightMeters / effectiveCellSize));
+  let columns = Math.max(1, Math.ceil(widthMeters / effectiveCellSize));
+  if (rows * columns > maxCells) {
+    effectiveCellSize *= Math.sqrt((rows * columns) / maxCells);
+    rows = Math.max(1, Math.ceil(heightMeters / effectiveCellSize));
+    columns = Math.max(1, Math.ceil(widthMeters / effectiveCellSize));
+    while (rows * columns > maxCells) {
+      effectiveCellSize *= 1.01;
+      rows = Math.max(1, Math.ceil(heightMeters / effectiveCellSize));
+      columns = Math.max(1, Math.ceil(widthMeters / effectiveCellSize));
+    }
+  }
+  const latitudeStep = latitudeSpan / rows;
+  const longitudeStep = longitudeSpan / columns;
+  const cellHeightMeters = heightMeters / rows;
+  const cellWidthMeters = widthMeters / columns;
+  const radius = Math.max(100, Math.ceil(Math.hypot(cellHeightMeters, cellWidthMeters) / 2));
+  const cells: GeographicGridCell[] = [];
+  for (let row = 0; row < rows; row++) {
+    const south = row === 0 ? bounds.south : bounds.south + latitudeStep * row;
+    const north = row === rows - 1 ? bounds.north : bounds.south + latitudeStep * (row + 1);
+    for (let column = 0; column < columns; column++) {
+      const west = column === 0 ? bounds.west : bounds.west + longitudeStep * column;
+      const east = column === columns - 1 ? bounds.east : bounds.west + longitudeStep * (column + 1);
+      cells.push({
+        sequence: cells.length,
+        south: coordinate(south), north: coordinate(north), west: coordinate(west), east: coordinate(east),
+        latitude: coordinate((south + north) / 2), longitude: coordinate((west + east) / 2), radius,
+      });
+    }
+  }
+  return cells;
+}
+
 export const normalizeText = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 export function normalizePhone(value?: string | null): string | null {
   if (!value) return null;

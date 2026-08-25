@@ -12,7 +12,21 @@ export function redisConnection() {
 export function queueOptions(): QueueOptions { return { connection: redisConnection(), defaultJobOptions: DEFAULT_JOB_OPTIONS }; }
 export const prospectingQueue = () => new Queue(QUEUES.prospecting, queueOptions());
 export const campaignQueue = () => new Queue(QUEUES.campaign, queueOptions());
+export async function ensureProspectingJob(queue: Pick<Queue, 'getJob' | 'add'>, runId: string) {
+  const jobId = `prospecting-${runId}`;
+  const existing = await queue.getJob(jobId);
+  if (existing) {
+    const state = await existing.getState();
+    if (state === 'failed') {
+      await existing.retry();
+      return existing;
+    }
+    if (state !== 'completed') return existing;
+    await existing.remove();
+  }
+  return queue.add('prospect-run', { runId }, { jobId });
+}
 export async function enqueueRun(runId: string) {
   const queue = prospectingQueue();
-  try { return await queue.add('prospect-run', { runId }, { jobId: `prospecting-${runId}` }); } finally { await queue.close(); }
+  try { return await ensureProspectingJob(queue, runId); } finally { await queue.close(); }
 }
