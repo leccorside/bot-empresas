@@ -7,6 +7,49 @@ const leadStatusOrder = ['NEW', 'QUALIFIED', 'CONTACT_PENDING', 'CONTACTED', 'RE
 const closedStatuses = ['NOT_INTERESTED', 'DO_NOT_CONTACT'];
 const leadStatusLabels: Record<string, string> = { NEW: 'Novo', QUALIFIED: 'Qualificado', CONTACT_PENDING: 'Contato pendente', CONTACTED: 'Contatado', REPLIED: 'Respondeu', INTERESTED: 'Interessado', MEETING: 'Reunião', PROPOSAL: 'Proposta', CUSTOMER: 'Cliente', NOT_INTERESTED: 'Sem interesse', DO_NOT_CONTACT: 'Não contatar' };
 const CARDS_PER_COLUMN = 8;
+const templateVariableNames = ['nome_empresa', 'cidade', 'categoria'];
+const templateVariableLabels: Record<string, string> = { nome_empresa: 'Nome da empresa', cidade: 'Cidade', categoria: 'Categoria' };
+const templateStatusLabels: Record<string, string> = { DRAFT: 'RASCUNHO', PENDING: 'EM ANÁLISE', APPROVED: 'ONLINE', REJECTED: 'FAILED', DISABLED: 'CANCELLED' };
+const initialTemplateForm = { name: '', language: 'pt_BR', category: 'MARKETING', bodyText: '', variables: [] as string[] };
+
+function TemplatesSection({ templates, onChanged }: { templates: any[]; onChanged: () => void }) {
+  const [form, setForm] = useState(initialTemplateForm);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  function toggleVariable(name: string) {
+    setForm(current => ({ ...current, variables: current.variables.includes(name) ? current.variables.filter(v => v !== name) : [...current.variables, name] }));
+  }
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setError('');
+    try { await api('templates', { method: 'POST', body: JSON.stringify(form) }); setForm(initialTemplateForm); onChanged(); }
+    catch (reason: any) { setError(reason.message); } finally { setBusy(false); }
+  }
+  async function action(id: string, path: string) {
+    setBusy(true); setError('');
+    try { await api(`templates/${id}/${path}`, { method: 'POST' }); onChanged(); }
+    catch (reason: any) { setError(reason.message); } finally { setBusy(false); }
+  }
+  async function remove(template: any) {
+    if (!confirm(`Excluir o template "${template.name}"?`)) return;
+    setBusy(true); setError('');
+    try { await api(`templates/${template.id}`, { method: 'DELETE' }); onChanged(); }
+    catch (reason: any) { setError(reason.message); } finally { setBusy(false); }
+  }
+
+  return <section className="card" style={{ marginBottom: 18 }}>
+    <div className="filtersHeader"><h2 className="sectionTitle">Templates de mensagem</h2>{error && <span className="filterError">{error}</span>}</div>
+    <form className="scheduleForm" onSubmit={submit} style={{ marginBottom: 16 }}>
+      <label className="field"><span>Nome (minúsculas e sublinhado)</span><input className="input" value={form.name} onChange={e => setForm(c => ({ ...c, name: e.target.value }))} placeholder="oportunidade_site" required /></label>
+      <label className="field"><span>Idioma</span><input className="input" value={form.language} onChange={e => setForm(c => ({ ...c, language: e.target.value }))} required /></label>
+      <label className="field"><span>Categoria</span><select className="input" value={form.category} onChange={e => setForm(c => ({ ...c, category: e.target.value }))}><option value="MARKETING">Marketing</option><option value="UTILITY">Utilidade</option><option value="AUTHENTICATION">Autenticação</option></select></label>
+      <div className="field scheduleDays"><span>Variáveis</span><div>{templateVariableNames.map((name, index) => <label key={name}><input type="checkbox" checked={form.variables.includes(name)} onChange={() => toggleVariable(name)} /> {`{{${index + 1}}}`} {templateVariableLabels[name]}</label>)}</div></div>
+      <label className="field" style={{ gridColumn: '1 / 3' }}><span>Corpo da mensagem</span><textarea className="input" rows={3} value={form.bodyText} onChange={e => setForm(c => ({ ...c, bodyText: e.target.value }))} placeholder="Olá {{1}}! Identificamos uma oportunidade para fortalecer sua presença digital." required /></label>
+      <div className="scheduleActions"><button className="btn" disabled={busy}>Criar template</button></div>
+    </form>
+    {templates.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Nome</th><th>Categoria</th><th>Idioma</th><th>Corpo</th><th>Status</th><th>Ações</th></tr></thead><tbody>{templates.map(template => <tr key={template.id}><td>{template.name}</td><td>{template.category}</td><td>{template.language}</td><td style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={template.bodyText}>{template.bodyText}</td><td><Status value={templateStatusLabels[template.status] ?? template.status} />{template.rejectionReason && <div className="tableHint">{template.rejectionReason}</div>}</td><td><div className="rowActions">{['DRAFT', 'REJECTED'].includes(template.status) && <button disabled={busy} className="btn secondary sm" onClick={() => action(template.id, 'submit')}>Enviar p/ aprovação</button>}{template.status === 'PENDING' && <button disabled={busy} className="btn secondary sm" onClick={() => action(template.id, 'sync')}>Sincronizar</button>}<button disabled={busy} className="btn danger sm" onClick={() => remove(template)}>Excluir</button></div></td></tr>)}</tbody></table></div> : <Empty>Nenhum template cadastrado ainda.</Empty>}
+  </section>;
+}
 
 function LeadCard({ business, onChanged }: { business: any; onChanged: () => void }) {
   const [history, setHistory] = useState<any[] | null>(null);
@@ -65,20 +108,26 @@ function PipelineColumn({ status, data, onChanged }: { status: string; data?: { 
 export default function CRM() {
   const [pipeline, setPipeline] = useState<Record<string, { items: any[]; total: number }>>({});
   const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [templates, setTemplates] = useState<any[]>([]);
   const [msg, setMsg] = useState('');
+  const [error, setError] = useState('');
+  const approvedTemplates = templates.filter(template => template.status === 'APPROVED');
 
   async function loadPipeline() {
     const results = await Promise.all(leadStatusOrder.map(status => api(`businesses?leadStatus=${status}&pageSize=${CARDS_PER_COLUMN}`)));
     setPipeline(Object.fromEntries(leadStatusOrder.map((status, index) => [status, results[index]])));
   }
   async function loadCampaigns() { setCampaigns(await api('campaigns')); }
-  useEffect(() => { void loadPipeline(); void loadCampaigns(); }, []);
+  async function loadTemplates() { setTemplates(await api('templates')); }
+  useEffect(() => { void loadPipeline(); void loadCampaigns(); void loadTemplates(); }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+    event.preventDefault(); setError('');
     const form = new FormData(event.currentTarget);
-    await api('campaigns', { method: 'POST', body: JSON.stringify({ name: form.get('name'), messageTemplate: form.get('messageTemplate'), filters: { city: form.get('city') || undefined, minScore: Number(form.get('minScore') || 0) } }) });
-    setMsg('Campanha criada em rascunho.'); void loadCampaigns();
+    try {
+      await api('campaigns', { method: 'POST', body: JSON.stringify({ name: form.get('name'), templateId: form.get('templateId'), filters: { city: form.get('city') || undefined, minScore: Number(form.get('minScore') || 0) } }) });
+      setMsg('Campanha criada em rascunho.'); void loadCampaigns();
+    } catch (reason: any) { setError(reason.message); }
   }
 
   return <Shell title="CRM & Campanhas" subtitle="Acompanhe o funil de oportunidades e converta com segurança">
@@ -86,15 +135,16 @@ export default function CRM() {
       <h2 className="sectionTitle">Pipeline de leads</h2>
       <div className="pipeline">{leadStatusOrder.map(status => <PipelineColumn key={status} status={status} data={pipeline[status]} onChanged={loadPipeline} />)}</div>
     </section>
+    <TemplatesSection templates={templates} onChanged={loadTemplates} />
     <section className="card" style={{ marginBottom: 18 }}>
-      <h2 className="sectionTitle">Criar campanha</h2>
-      <form onSubmit={submit} className="grid" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+      <div className="filtersHeader"><h2 className="sectionTitle">Criar campanha</h2>{error && <span className="filterError">{error}</span>}</div>
+      {approvedTemplates.length ? <form onSubmit={submit} className="grid" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr' }}>
         <input className="input" name="name" placeholder="Nome da campanha" required />
+        <select className="input" name="templateId" required defaultValue=""><option value="" disabled>Template aprovado…</option>{approvedTemplates.map(template => <option key={template.id} value={template.id}>{template.name}</option>)}</select>
         <input className="input" name="city" placeholder="Cidade (opcional)" />
         <input className="input" name="minScore" type="number" placeholder="Score mínimo" />
-        <textarea className="input" name="messageTemplate" style={{ gridColumn: '1 / 4' }} rows={3} defaultValue="Olá, {{empresa}}! Identificamos uma oportunidade para fortalecer sua presença digital. Podemos conversar?" />
         <button className="btn" style={{ width: 180 }}>Criar campanha</button>
-      </form>
+      </form> : <Empty>Cadastre e aprove um template acima antes de criar uma campanha.</Empty>}
     </section>
     <section className="card">{campaigns.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Campanha</th><th>Status</th><th>Mensagens</th><th>Criada</th><th>Ação</th></tr></thead><tbody>{campaigns.map(x => <CampaignRow key={x.id} campaign={x} onChanged={loadCampaigns} />)}</tbody></table></div> : <Empty>Nenhuma campanha criada.</Empty>}</section>
     {msg && <div className="toast">{msg}</div>}

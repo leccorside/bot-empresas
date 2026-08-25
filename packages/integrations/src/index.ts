@@ -55,15 +55,41 @@ export class GooglePlacesProvider implements BusinessDiscoveryProvider {
   }
 }
 
-export interface MessagingProvider { send(input:{to:string; body:string; idempotencyKey:string}):Promise<{providerMessageId:string}> }
+export type MessageTemplateInput = { name: string; language: string; bodyParameters: string[] };
+export interface MessagingProvider { send(input:{to:string; idempotencyKey:string; template:MessageTemplateInput}):Promise<{providerMessageId:string}> }
 export class WhatsAppCloudProvider implements MessagingProvider {
-  async send(input:{to:string;body:string;idempotencyKey:string}) {
+  async send(input:{to:string;idempotencyKey:string;template:MessageTemplateInput}) {
     if (process.env.DRY_RUN !== 'false') return { providerMessageId:`dry-run:${input.idempotencyKey}` };
     const token=process.env.WHATSAPP_ACCESS_TOKEN, phoneId=process.env.WHATSAPP_PHONE_NUMBER_ID;
     if(!token || !phoneId) throw new Error('Credenciais WhatsApp não configuradas');
-    const response=await fetch(`https://graph.facebook.com/v23.0/${phoneId}/messages`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to:input.to,type:'text',text:{body:input.body}})});
+    const template:any={name:input.template.name,language:{code:input.template.language}};
+    if(input.template.bodyParameters.length) template.components=[{type:'body',parameters:input.template.bodyParameters.map(text=>({type:'text',text}))}];
+    const response=await fetch(`https://graph.facebook.com/v23.0/${phoneId}/messages`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to:input.to,type:'template',template})});
     if(!response.ok) throw new Error(`WhatsApp respondeu ${response.status}`);
     const data=await response.json() as any; return {providerMessageId:data.messages?.[0]?.id};
+  }
+}
+
+export type TemplateSubmissionInput = { name: string; language: string; category: string; bodyText: string };
+export type TemplateSubmissionResult = { providerTemplateId: string; status: 'PENDING' | 'APPROVED' };
+export type TemplateStatusResult = { status: 'PENDING' | 'APPROVED' | 'REJECTED'; rejectedReason?: string };
+export class WhatsAppTemplateProvider {
+  private readonly token: string | undefined;
+  private readonly wabaId: string | undefined;
+  constructor(token = process.env.WHATSAPP_ACCESS_TOKEN, wabaId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID) { this.token = token; this.wabaId = wabaId; }
+  async submit(input: TemplateSubmissionInput): Promise<TemplateSubmissionResult> {
+    if (!this.token || !this.wabaId) return { providerTemplateId: `demo:${input.name}`, status: 'APPROVED' };
+    const response = await fetch(`https://graph.facebook.com/v23.0/${this.wabaId}/message_templates`, { method: 'POST', headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: input.name, language: input.language, category: input.category, components: [{ type: 'BODY', text: input.bodyText }] }) });
+    if (!response.ok) throw new Error(`Meta respondeu ${response.status}: ${await response.text()}`);
+    const data = await response.json() as any;
+    return { providerTemplateId: data.id, status: 'PENDING' };
+  }
+  async checkStatus(providerTemplateId: string): Promise<TemplateStatusResult> {
+    if (!this.token || providerTemplateId.startsWith('demo:')) return { status: 'APPROVED' };
+    const response = await fetch(`https://graph.facebook.com/v23.0/${providerTemplateId}?fields=status,rejected_reason`, { headers: { Authorization: `Bearer ${this.token}` } });
+    if (!response.ok) throw new Error(`Meta respondeu ${response.status}: ${await response.text()}`);
+    const data = await response.json() as any;
+    return { status: data.status, rejectedReason: data.rejected_reason };
   }
 }
 

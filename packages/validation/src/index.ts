@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { templateVariableNames, templateVariablesMatchBody } from '@prospector/shared';
 export const createRunSchema = z.object({ country: z.string().min(2).default('Brasil'), state: z.string().min(2), city: z.string().min(2), category: z.string().min(2).default('Todos'), mode: z.enum(['now','queue']).default('now') });
 export const createScheduleSchema = z.object({
   name: z.string().trim().min(2), country: z.string().trim().min(2).default('Brasil'), state: z.string().trim().min(2), city: z.string().trim().min(2),
@@ -22,6 +23,18 @@ export const autopilotConfigSchema = z.object({
   delaySeconds: z.coerce.number().int().min(0).max(86400),
   dailyLimit: z.coerce.number().int().min(1).max(1000),
   monthlyLimit: z.coerce.number().int().min(1).max(20000),
+});
+export const messageTemplateSchema = z.object({
+  name: z.string().trim().toLowerCase().regex(/^[a-z0-9_]+$/, 'Use apenas letras minúsculas, números e sublinhado').min(3).max(60),
+  language: z.string().trim().min(2).default('pt_BR'),
+  category: z.enum(['MARKETING', 'UTILITY', 'AUTHENTICATION']).default('MARKETING'),
+  bodyText: z.string().trim().min(10).max(1024),
+  variables: z.array(z.enum(templateVariableNames)).max(3).default([]),
+}).superRefine((value, ctx) => {
+  if (!templateVariablesMatchBody(value.bodyText, value.variables)) {
+    const placeholders = value.variables.map((_, index) => `{{${index + 1}}}`).join(', ') || '(nenhum)';
+    ctx.addIssue({ code: 'custom', path: ['bodyText'], message: `O corpo deve conter exatamente os placeholders ${placeholders}, na ordem, correspondentes às variáveis declaradas` });
+  }
 });
 const queryBoolean = z.enum(['true', 'false']).transform(value => value === 'true');
 export const businessFilterSchema = z.object({

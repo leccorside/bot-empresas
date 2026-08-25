@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { businessFilterSchema, createRunSchema, createScheduleSchema } from '../packages/validation/src';
+import { businessFilterSchema, createRunSchema, createScheduleSchema, messageTemplateSchema } from '../packages/validation/src';
 
 describe('validação de prospecções', () => {
   it('aplica defaults seguros à execução manual', () => {
@@ -69,5 +69,21 @@ describe('validação dos filtros de empresas', () => {
     expect(() => businessFilterSchema.parse({ minRating: '5', maxRating: '4' })).toThrow('Faixa de rating inválida');
     expect(() => businessFilterSchema.parse({ minReviews: '100', maxReviews: '10' })).toThrow('Faixa de avaliações inválida');
     expect(() => businessFilterSchema.parse({ minScore: '80', maxScore: '40' })).toThrow('Faixa de score inválida');
+  });
+});
+
+describe('validação de templates de mensagem', () => {
+  it('aceita um template válido com variáveis correspondendo aos placeholders', () => {
+    expect(messageTemplateSchema.parse({ name: 'oportunidade_site', bodyText: 'Olá {{1}}, notamos uma oportunidade!', variables: ['nome_empresa'] })).toMatchObject({ name: 'oportunidade_site', language: 'pt_BR', category: 'MARKETING', variables: ['nome_empresa'] });
+  });
+
+  it('normaliza o nome para minúsculas e rejeita caracteres inválidos', () => {
+    expect(messageTemplateSchema.parse({ name: 'Oferta_Especial', bodyText: 'Corpo com pelo menos dez caracteres' })).toMatchObject({ name: 'oferta_especial' });
+    expect(() => messageTemplateSchema.parse({ name: 'oferta especial', bodyText: 'Corpo com pelo menos dez caracteres' })).toThrow();
+  });
+
+  it('rejeita quando os placeholders do corpo não batem com as variáveis declaradas', () => {
+    expect(() => messageTemplateSchema.parse({ name: 'sem_placeholder', bodyText: 'Corpo sem nenhuma variável aqui', variables: ['nome_empresa'] })).toThrow('placeholders');
+    expect(() => messageTemplateSchema.parse({ name: 'placeholder_sobrando', bodyText: 'Olá {{1}}, tudo bem?', variables: [] })).toThrow('placeholders');
   });
 });

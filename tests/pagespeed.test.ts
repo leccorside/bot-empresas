@@ -3,7 +3,7 @@ import { PageSpeedProvider } from '../packages/integrations/src/pagespeed';
 
 describe('PageSpeedProvider', () => {
   it('sem chave, retorna um score de demonstração determinístico sem chamar a rede', async () => {
-    const provider = new PageSpeedProvider(undefined);
+    const provider = new PageSpeedProvider('');
     const first = await provider.analyze('https://example.com');
     const second = await provider.analyze('https://example.com');
     expect(first).toEqual(second);

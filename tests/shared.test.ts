@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest';
-import {calculateLeadScore,heartbeatStatus,normalizePhone,normalizeText,parseAutopilotConfig,phoneType,shouldDispatchAutopilot,startOfLocalDay,startOfLocalMonth} from '../packages/shared/src';
+import {calculateLeadScore,heartbeatStatus,normalizePhone,normalizeText,parseAutopilotConfig,phoneType,resolveTemplateVariable,shouldDispatchAutopilot,startOfLocalDay,startOfLocalMonth,templatePlaceholders,templateVariablesMatchBody} from '../packages/shared/src';
 describe('normalização e score',()=>{
   it('normaliza nomes para deduplicação',()=>expect(normalizeText('Clínica São José!')).toBe('clinica sao jose'));
   it('remove espaços e símbolos repetidos',()=>expect(normalizeText('  Alfa---Beta & Cia.  ')).toBe('alfa beta cia'));
@@ -45,5 +45,30 @@ describe('autopilot',()=>{
     expect(startOfLocalDay(reference).getDate()).toBe(reference.getDate());
     expect(startOfLocalMonth(reference).getDate()).toBe(1);
     expect(startOfLocalMonth(reference).getHours()).toBe(0);
+  });
+});
+
+describe('templates de mensagem', () => {
+  it('extrai os placeholders numerados do corpo, sem duplicar e em ordem', () => {
+    expect(templatePlaceholders('Olá {{1}}, tudo bem em {{2}}?')).toEqual([1, 2]);
+    expect(templatePlaceholders('{{2}} depois {{1}} e {{1}} de novo')).toEqual([1, 2]);
+    expect(templatePlaceholders('Sem variáveis aqui')).toEqual([]);
+  });
+
+  it('valida que as variáveis declaradas batem exatamente com os placeholders do corpo', () => {
+    expect(templateVariablesMatchBody('Olá {{1}}!', ['nome_empresa'])).toBe(true);
+    expect(templateVariablesMatchBody('Olá {{1}}, de {{2}}!', ['nome_empresa', 'cidade'])).toBe(true);
+    expect(templateVariablesMatchBody('Sem variáveis', [])).toBe(true);
+    expect(templateVariablesMatchBody('Olá {{1}}!', [])).toBe(false);
+    expect(templateVariablesMatchBody('Olá!', ['nome_empresa'])).toBe(false);
+    expect(templateVariablesMatchBody('Olá {{2}}!', ['nome_empresa'])).toBe(false);
+  });
+
+  it('resolve variáveis conhecidas a partir dos dados da empresa e ignora desconhecidas', () => {
+    const business = { name: 'Padaria Boa Vista', city: 'Caldas Novas', category: 'Padarias' };
+    expect(resolveTemplateVariable('nome_empresa', business)).toBe('Padaria Boa Vista');
+    expect(resolveTemplateVariable('cidade', business)).toBe('Caldas Novas');
+    expect(resolveTemplateVariable('categoria', business)).toBe('Padarias');
+    expect(resolveTemplateVariable('desconhecida', business)).toBe('');
   });
 });

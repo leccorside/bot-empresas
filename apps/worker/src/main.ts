@@ -3,7 +3,7 @@ import { createWebsiteAnalysisIntent, persistDiscoveryProgress, prisma, recordSe
 import type { ProspectingRun, SearchCell } from '@prospector/database';
 import { enqueueWebsiteAnalysis, queueOptions, QUEUES } from '@prospector/queues';
 import { analyzeWebsite, GooglePlacesProvider, PageSpeedProvider, websiteAnalysisVersion, WhatsAppCloudProvider } from '@prospector/integrations';
-import { calculateLeadScore, generateGeographicGrid, logger, normalizePhone, normalizeText, phoneType } from '@prospector/shared';
+import { calculateLeadScore, generateGeographicGrid, logger, normalizePhone, normalizeText, phoneType, resolveTemplateVariable } from '@prospector/shared';
 import type { GeographicBounds } from '@prospector/shared';
 
 const log=logger('worker');
@@ -167,17 +167,22 @@ async function processCampaign(job:Job<{campaignId:string}>){
   const campaignLog=whatsappLog.child({jobId:job.id,campaignId:job.data.campaignId});
   campaignLog.info('campaign job started');
   try{
-    const campaign=await prisma.campaign.findUnique({where:{id:job.data.campaignId}});if(!campaign)return;
+    const campaign=await prisma.campaign.findUnique({where:{id:job.data.campaignId},include:{template:true}});if(!campaign)return;
+    if(!campaign.template)throw new Error('Campanha sem template aprovado');
+    if(campaign.template.status!=='APPROVED')throw new Error('Template da campanha não está aprovado');
     if(await automationPaused())throw new Error('Automações pausadas');
     if(process.env.AUTO_SEND_CAMPAIGNS!=='true'&&process.env.DRY_RUN==='false')throw new Error('AUTO_SEND_CAMPAIGNS desativado');
     const messaging=new WhatsAppCloudProvider();
+    const template=campaign.template;
+    const templateVariables=(template.variables as string[])??[];
     await prisma.campaign.update({where:{id:campaign.id},data:{status:'RUNNING',startedAt:new Date()}});
     const messages=await prisma.campaignMessage.findMany({where:{campaignId:campaign.id,status:{in:['PENDING','QUEUED']}},include:{business:true}});
     for(const message of messages){
       const messageLog=campaignLog.child({businessId:message.businessId,messageId:message.id});
       const suppressed=await prisma.contactSuppression.findUnique({where:{normalizedPhone:message.phone}});
       if(suppressed){await prisma.campaignMessage.update({where:{id:message.id},data:{status:'BLOCKED',errorMessage:'Contato suprimido'}});messageLog.warn('message blocked by suppression list');continue}
-      const result=await messaging.send({to:message.phone,body:campaign.messageTemplate.replace(/{{empresa}}/g,message.business.name),idempotencyKey:message.idempotencyKey});
+      const bodyParameters=templateVariables.map(variable=>resolveTemplateVariable(variable,message.business));
+      const result=await messaging.send({to:message.phone,idempotencyKey:message.idempotencyKey,template:{name:template.name,language:template.language,bodyParameters}});
       await prisma.campaignMessage.update({where:{id:message.id},data:{status:'SENT',providerMessageId:result.providerMessageId,sentAt:new Date()}});
       messageLog.info('message sent');
     }

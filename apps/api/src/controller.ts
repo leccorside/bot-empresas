@@ -31,6 +31,12 @@ export class ApiController {
   @Get('analytics') analytics(@Query('days') days:any){return this.service.analytics(days)}
   @Get('jobs') jobs(){return this.service.jobs()}
   @Post('jobs/:id/:action') jobAction(@Param('id') id:string,@Param('action') action:string){return this.service.jobAction(id,action)}
+  @Get('templates') templates(){return this.service.templates()}
+  @Post('templates') createTemplate(@Body() body:any){return this.service.createTemplate(body)}
+  @Patch('templates/:id') updateTemplate(@Param('id') id:string,@Body() body:any){return this.service.updateTemplate(id,body)}
+  @Delete('templates/:id') deleteTemplate(@Param('id') id:string){return this.service.deleteTemplate(id)}
+  @Post('templates/:id/submit') submitTemplate(@Param('id') id:string){return this.service.submitTemplate(id)}
+  @Post('templates/:id/sync') syncTemplateStatus(@Param('id') id:string){return this.service.syncTemplateStatus(id)}
   @Get('campaigns') campaigns(){return this.service.campaigns()}
   @Post('campaigns') createCampaign(@Body() body:any){return this.service.createCampaign(body)}
   @Post('campaigns/:id/schedule') scheduleCampaign(@Param('id') id:string){return this.service.scheduleCampaign(id)}

@@ -93,6 +93,20 @@ enum CampaignStatus {
   CANCELLED
 }
 
+enum TemplateCategory {
+  MARKETING
+  UTILITY
+  AUTHENTICATION
+}
+
+enum TemplateStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  DISABLED
+}
+
 enum MessageStatus {
   PENDING
   QUEUED
@@ -396,12 +410,31 @@ model LeadEvent {
   @@index([businessId, createdAt])
 }
 
+model MessageTemplate {
+  id String @id @default(cuid())
+  name String @unique
+  language String @default("pt_BR")
+  category TemplateCategory @default(MARKETING)
+  bodyText String
+  variables Json @default("[]")
+  status TemplateStatus @default(DRAFT)
+  providerTemplateId String?
+  rejectionReason String?
+  submittedAt DateTime?
+  approvedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  campaigns Campaign[]
+}
+
 model Campaign {
   id String @id @default(cuid())
   name String
   status CampaignStatus @default(DRAFT)
   filters Json @default("{}")
   messageTemplate String
+  templateId String?
+  template MessageTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   scheduledAt DateTime?
   startedAt DateTime?
   finishedAt DateTime?

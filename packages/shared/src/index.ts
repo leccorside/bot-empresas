@@ -198,6 +198,23 @@ export function calculateLeadScore(input: LeadScoreInput) {
 }
 export const terminalRunStates = ['COMPLETED', 'FAILED', 'CANCELLED'] as const;
 
+export const templateVariableNames = ['nome_empresa', 'cidade', 'categoria'] as const;
+export type TemplateVariableName = typeof templateVariableNames[number];
+export function templatePlaceholders(bodyText: string) {
+  return [...new Set([...bodyText.matchAll(/\{\{(\d+)\}\}/g)].map(match => Number(match[1])))].sort((a, b) => a - b);
+}
+export function templateVariablesMatchBody(bodyText: string, variables: string[]) {
+  const expected = variables.map((_, index) => index + 1);
+  const found = templatePlaceholders(bodyText);
+  return expected.length === found.length && expected.every((value, index) => value === found[index]);
+}
+export function resolveTemplateVariable(name: string, business: { name: string; city: string; category: string }) {
+  if (name === 'nome_empresa') return business.name;
+  if (name === 'cidade') return business.city;
+  if (name === 'categoria') return business.category;
+  return '';
+}
+
 export type AutopilotConfig = { maxConcurrentCities: number; delaySeconds: number; dailyLimit: number; monthlyLimit: number };
 export const defaultAutopilotConfig: AutopilotConfig = { maxConcurrentCities: 1, delaySeconds: 300, dailyLimit: 10, monthlyLimit: 200 };
 export function parseAutopilotConfig(raw: unknown): AutopilotConfig {
