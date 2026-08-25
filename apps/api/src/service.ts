@@ -81,6 +81,31 @@ export class ApiService {
     else if(nextRunAt&&nextRunAt<=now)nextRunAt=nextScheduleOccurrence(body.scheduleType,now,null,body.timezone,nextRunAt);
     return{...body,cronExpression:cronBased?body.cronExpression:null,nextRunAt};
   }
+  async analytics(rawDays?:any){
+    const days=Math.min(180,Math.max(7,Number(rawDays)||30));
+    const since=new Date(Date.now()-days*24*60*60*1000);
+    const [growthRows,byCategoryRaw,byCityRaw,scoreDistribution,leadFunnel,websiteStatus,whatsappStatus,totalBusinesses]=await Promise.all([
+      prisma.$queryRaw<Array<{day:Date;count:number}>>`SELECT date_trunc('day',"firstSeenAt") AS day, count(*)::int AS count FROM "Business" WHERE "firstSeenAt">=${since} GROUP BY day ORDER BY day`,
+      prisma.business.groupBy({by:['category'],_count:{_all:true},_avg:{leadScore:true}}),
+      prisma.business.groupBy({by:['city','state'],_count:{_all:true},_avg:{leadScore:true}}),
+      prisma.business.groupBy({by:['scoreClass'],_count:{_all:true}}),
+      prisma.business.groupBy({by:['leadStatus'],_count:{_all:true}}),
+      prisma.business.groupBy({by:['siteStatus'],_count:{_all:true}}),
+      prisma.businessPhone.groupBy({by:['whatsappStatus'],_count:{_all:true}}),
+      prisma.business.count(),
+    ]);
+    const byCategory=byCategoryRaw.map(row=>({category:row.category,count:row._count._all,avgScore:Math.round(row._avg.leadScore??0)})).sort((a,b)=>b.count-a.count).slice(0,10);
+    const byCity=byCityRaw.map(row=>({city:row.city,state:row.state,count:row._count._all,avgScore:Math.round(row._avg.leadScore??0)})).sort((a,b)=>b.count-a.count).slice(0,10);
+    return{
+      days,totalBusinesses,
+      growth:growthRows.map(row=>({date:row.day.toISOString().slice(0,10),count:row.count})),
+      scoreDistribution:Object.fromEntries(scoreDistribution.map(row=>[row.scoreClass,row._count._all])),
+      leadFunnel:Object.fromEntries(leadFunnel.map(row=>[row.leadStatus,row._count._all])),
+      websiteStatus:Object.fromEntries(websiteStatus.map(row=>[row.siteStatus,row._count._all])),
+      whatsappStatus:Object.fromEntries(whatsappStatus.map(row=>[row.whatsappStatus,row._count._all])),
+      byCategory,byCity,
+    };
+  }
   jobs(){return prisma.jobRecord.findMany({orderBy:{createdAt:'desc'},take:200,include:{run:{select:{city:true,state:true,status:true}}}})}
   async jobAction(id:string,action:string){const job=await prisma.jobRecord.findUnique({where:{id}});if(!job)throw new NotFoundException();if(action==='retry'&&job.runId){await prisma.jobRecord.update({where:{id},data:{state:'RECOVERING',errorMessage:null}});await enqueueRun(job.runId);return{ok:true}}if(action==='retry'&&job.queue==='website-analysis'){const analysisId=String((job.payload as any)?.analysisId??'');const analysis=await prisma.websiteAnalysis.findUnique({where:{id:analysisId}});if(!analysis)throw new NotFoundException('Análise não encontrada');await prisma.$transaction([prisma.websiteAnalysis.update({where:{id:analysis.id},data:{status:'RECOVERING',errorMessage:null}}),prisma.jobRecord.update({where:{id},data:{state:'RECOVERING',errorMessage:null}})]);await enqueueWebsiteAnalysis(analysis.id);return{ok:true}}if(action==='cancel'){if(job.queue==='website-analysis'){const analysisId=String((job.payload as any)?.analysisId??'');if(analysisId)await prisma.websiteAnalysis.updateMany({where:{id:analysisId},data:{status:'CANCELLED'}});const queue=websiteAnalysisQueue();try{await (await queue.getJob(`website-analysis-${analysisId}`))?.remove()}catch{}finally{await queue.close()}}return prisma.jobRecord.update({where:{id},data:{state:'CANCELLED'}})}throw new BadRequestException('Ação inválida')}
   campaigns(){return prisma.campaign.findMany({orderBy:{createdAt:'desc'},include:{_count:{select:{messages:true}}}})}
