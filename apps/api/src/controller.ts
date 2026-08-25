@@ -8,6 +8,7 @@ export class ApiController {
   @Post('auth/login') login(@Body() body:any){return this.service.login(body)}
   @Get('dashboard') dashboard(){return this.service.dashboard()}
   @Get('runs') runs(){return this.service.runs()}
+  @Get('runs/history') runHistory(@Query() query:any){return this.service.runHistory(query)}
   @Post('runs') createRun(@Body() body:any){return this.service.createRun(body)}
   @Get('runs/:id/cells') runCells(@Param('id') id:string){return this.service.runCells(id)}
   @Post('runs/:id/:action') runAction(@Param('id') id:string,@Param('action') action:string){return this.service.runAction(id,action)}

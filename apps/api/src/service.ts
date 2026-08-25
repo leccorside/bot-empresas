@@ -34,6 +34,22 @@ export class ApiService {
     return{metrics:{businesses,withWebsite,withoutWebsite:businesses-withWebsite,withPhone,withoutPhone:businesses-withPhone,whatsapp,noReviews,high},runs,schedules,jobs:Object.fromEntries(jobs.map(job=>[job.state,job._count])),queues:health.queues,services:health.services,latencyMs:health.latencyMs,uptimeSeconds:health.uptimeSeconds,storage:{databaseBytes:Number(databaseSize[0]?.bytes??0),exportsBytes,logsBytes,exportFiles},healthCheckedAt:health.timestamp,settings:{dryRun:process.env.DRY_RUN!=='false',...(automation?.value as object??{})}}
   }
   runs(){return prisma.prospectingRun.findMany({orderBy:{createdAt:'desc'},take:100,include:{_count:{select:{cells:true,checkpoints:true}}}})}
+  async runHistory(query:any){
+    const where:any={status:{in:['COMPLETED','FAILED','CANCELLED']}};
+    if(query.city)where.city=query.city;if(query.state)where.state=query.state;if(query.category)where.category=query.category;
+    const runs=await prisma.prospectingRun.findMany({where,orderBy:{createdAt:'asc'}});
+    if(!runs.length)return[];
+    const opportunityRows=await prisma.discoveryEvent.groupBy({by:['runId'],where:{runId:{in:runs.map(r=>r.id)},business:{leadScore:{gte:60}}},_count:{_all:true}});
+    const opportunities=Object.fromEntries(opportunityRows.map(row=>[row.runId,row._count._all]));
+    const groups=new Map<string,{destination:{city:string;state:string;category:string};runs:any[]}>();
+    for(const run of runs){
+      const key=`${run.city}|${run.state}|${run.category}`;
+      if(!groups.has(key))groups.set(key,{destination:{city:run.city,state:run.state,category:run.category},runs:[]});
+      const list=groups.get(key)!.runs;const previous=list[list.length-1];const opportunitiesFound=opportunities[run.id]??0;
+      list.push({id:run.id,createdAt:run.createdAt,finishedAt:run.finishedAt,status:run.status,businessesFound:run.businessesFound,businessesNew:run.businessesNew,businessesUpdated:run.businessesUpdated,duplicatesFound:run.duplicatesFound,websitesFound:run.websitesFound,withoutWebsite:run.withoutWebsite,phonesFound:run.phonesFound,whatsappFound:run.whatsappFound,opportunitiesFound,growthBusinesses:previous?run.businessesFound-previous.businessesFound:null,growthOpportunities:previous?opportunitiesFound-previous.opportunitiesFound:null});
+    }
+    return[...groups.values()].sort((a,b)=>new Date(b.runs[b.runs.length-1].createdAt).getTime()-new Date(a.runs[a.runs.length-1].createdAt).getTime());
+  }
   async createRun(raw:any){const parsed=createRunSchema.parse(raw);const {mode:_mode,...body}=parsed;const run=await prisma.prospectingRun.create({data:{...body,idempotencyKey:`manual:${randomUUID()}`}});await prisma.$transaction([prisma.jobRecord.create({data:{queue:'prospecting',name:'prospect-run',runId:run.id,idempotencyKey:`prospecting:${run.id}`,payload:{runId:run.id}}}),prisma.prospectingRun.update({where:{id:run.id},data:{status:'QUEUED',currentStage:'QUEUED'}})]);const job=await enqueueRun(run.id);await prisma.jobRecord.update({where:{idempotencyKey:`prospecting:${run.id}`},data:{bullJobId:job.id}});return run}
   async runCells(id:string){const run=await prisma.prospectingRun.findUnique({where:{id},select:{id:true,city:true,state:true,category:true,boundarySouth:true,boundaryNorth:true,boundaryWest:true,boundaryEast:true,gridCellSizeMeters:true,gridCellsTotal:true,gridCellsCompleted:true}});if(!run)throw new NotFoundException('Execução não encontrada');const cells=await prisma.searchCell.findMany({where:{runId:id},orderBy:{sequence:'asc'}});return{run,cells}}
   async runAction(id:string,action:string){const run=await prisma.prospectingRun.findUnique({where:{id}});if(!run)throw new NotFoundException();if(action==='cancel'){const [cancelled]=await prisma.$transaction([prisma.prospectingRun.update({where:{id},data:{status:'CANCELLED',finishedAt:new Date()}}),prisma.jobRecord.updateMany({where:{runId:id,state:{in:['WAITING','ACTIVE','RECOVERING']}},data:{state:'CANCELLED',completedAt:new Date()}})]);return cancelled}if(action==='retry'){await prisma.prospectingRun.update({where:{id},data:{status:'RECOVERING',errorMessage:null,finishedAt:null}});await enqueueRun(id);return{ok:true}};throw new BadRequestException('Ação inválida')}
