@@ -6,6 +6,7 @@ describe('exportações persistentes', () => {
     const csv = renderBusinessesCsv([{ name: 'Clínica "Saúde"', category: 'Clínica', address: null, city: 'Goiânia', state: 'GO', phone: null, phones: [], website: null, siteStatus: 'NO_WEBSITE', rating: 4.5, reviewsCount: 10, mapsUrl: null, leadScore: 70, firstSeenAt: new Date('2026-08-25T12:00:00Z'), updatedAt: new Date('2026-08-25T13:00:00Z') }]);
     expect(csv.startsWith('\uFEFF')).toBe(true);
     expect(csv).toContain('"Clínica ""Saúde""";"Clínica"');
+    expect(csv).toContain('"URL Final";"Status Site";"HTTP";"Resposta (ms)"');
   });
 
   it('gera nome único, legível e com a extensão solicitada', () => {

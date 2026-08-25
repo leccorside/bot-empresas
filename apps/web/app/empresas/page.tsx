@@ -14,6 +14,13 @@ const initialFilters: Filters = { search: '', state: '', city: '', category: '',
 const siteLabels: Record<string, string> = { NO_WEBSITE: 'Sem site', POOR: 'Ruim', AVERAGE: 'Médio', GOOD: 'Bom', UNKNOWN: 'Desconhecido' };
 const whatsappLabels: Record<string, string> = { UNKNOWN: 'Desconhecido', AVAILABLE: 'Disponível', NOT_AVAILABLE: 'Indisponível', INVALID: 'Inválido' };
 
+function WebsiteSummary({ business }: { business: any }) {
+  if (!business.website) return <Status value="NO_WEBSITE" />;
+  const safeUrl = /^https?:\/\//i.test(business.website) ? business.website : `https://${business.website}`;
+  const technologies = Array.isArray(business.technologies) ? business.technologies.join(', ') : '';
+  return <div className="websiteSummary"><div><a href={safeUrl} target="_blank" rel="noreferrer">Abrir site</a> <Status value={business.siteStatus} /></div><small>{business.siteHttpStatus ?? 'HTTP —'} · {business.siteResponseMs != null ? `${business.siteResponseMs} ms` : 'tempo —'} · {business.hasHttps ? 'HTTPS' : 'sem HTTPS'} · {business.siteSslValid ? 'SSL válido' : 'SSL —'} · {business.hasViewport ? 'responsivo' : 'viewport —'}</small>{technologies && <small title={technologies}>{technologies}</small>}</div>;
+}
+
 export default function Businesses() {
   const [data, setData] = useState<any>({ items: [], total: 0 });
   const [options, setOptions] = useState<any>({ locations: [], categories: [], siteStatuses: [], whatsappStatuses: [] });
@@ -21,6 +28,7 @@ export default function Businesses() {
   const [exports, setExports] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [exportBusy, setExportBusy] = useState('');
+  const [analyzingId, setAnalyzingId] = useState('');
   const [error, setError] = useState('');
   const cities = useMemo(() => options.locations.filter((location: any) => !filters.state || location.state === filters.state), [options.locations, filters.state]);
   const states = useMemo(() => Array.from(new Set<string>(options.locations.map((location: any) => location.state))), [options.locations]);
@@ -58,6 +66,21 @@ export default function Businesses() {
     finally { setExportBusy(''); }
   }
 
+  async function analyze(business: any) {
+    setAnalyzingId(business.id); setError('');
+    try {
+      const requestedAt = Date.now();
+      await api(`businesses/${business.id}/website-analysis`, { method: 'POST' });
+      for (let attempt = 0; attempt < 10; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const current = await api(`businesses/${business.id}`);
+        if (current.websiteCheckedAt && new Date(current.websiteCheckedAt).getTime() >= requestedAt) break;
+      }
+      await load();
+    } catch (requestError: any) { setError(requestError.message ?? 'Falha ao analisar website'); }
+    finally { setAnalyzingId(''); }
+  }
+
   const size = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
 
   return <Shell title="Empresas" subtitle={`${data.total ?? 0} empresas correspondem aos filtros`}>
@@ -82,7 +105,7 @@ export default function Businesses() {
       </form>
     </section>
     <div className="toolbar"><span className="spacer"/><button disabled={Boolean(exportBusy)} className="btn secondary" onClick={() => createExport('CSV')}>{exportBusy === 'CSV' ? 'Gerando CSV…' : 'Exportar CSV'}</button><button disabled={Boolean(exportBusy)} className="btn secondary" onClick={() => createExport('XLSX')}>{exportBusy === 'XLSX' ? 'Gerando XLSX…' : 'Exportar XLSX'}</button></div>
-    <section className="card">{data.items.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Empresa</th><th>Categoria</th><th>Cidade</th><th>Telefone</th><th>WhatsApp</th><th>Site</th><th>Rating</th><th>Avaliações</th><th>Lead Score</th><th>CRM</th></tr></thead><tbody>{data.items.map((business: any) => <tr key={business.id}><td><b>{business.name}</b></td><td>{business.category}</td><td>{business.city}/{business.state}</td><td>{business.phone ?? '—'}</td><td>{business.phones?.[0]?.whatsappStatus ?? 'UNKNOWN'}</td><td><Status value={business.siteStatus}/></td><td>{business.rating ?? '—'}</td><td>{business.reviewsCount ?? 0}</td><td><b style={{ color: business.leadScore >= 60 ? 'var(--brand)' : 'inherit' }}>{business.leadScore}</b></td><td><Status value={business.leadStatus}/></td></tr>)}</tbody></table></div> : <Empty>Nenhuma empresa corresponde aos filtros.</Empty>}</section>
+    <section className="card">{data.items.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Empresa</th><th>Categoria</th><th>Cidade</th><th>Telefone</th><th>WhatsApp</th><th>Website Analyzer</th><th>Rating</th><th>Avaliações</th><th>Lead Score</th><th>CRM</th><th>Ação</th></tr></thead><tbody>{data.items.map((business: any) => <tr key={business.id}><td><b>{business.name}</b></td><td>{business.category}</td><td>{business.city}/{business.state}</td><td>{business.phone ?? '—'}</td><td>{business.phones?.[0]?.whatsappStatus ?? 'UNKNOWN'}</td><td><WebsiteSummary business={business} /></td><td>{business.rating ?? '—'}</td><td>{business.reviewsCount ?? 0}</td><td><b style={{ color: business.leadScore >= 60 ? 'var(--brand)' : 'inherit' }}>{business.leadScore}</b></td><td><Status value={business.leadStatus}/></td><td><button className="btn secondary sm" disabled={!business.website || analyzingId === business.id} onClick={() => analyze(business)}>{analyzingId === business.id ? 'Analisando…' : 'Analisar site'}</button></td></tr>)}</tbody></table></div> : <Empty>Nenhuma empresa corresponde aos filtros.</Empty>}</section>
     <section className="card exportHistory"><h2 className="sectionTitle">Exportações persistentes</h2>{exports.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Arquivo</th><th>Formato</th><th>Linhas</th><th>Tamanho</th><th>Status</th><th>Criado</th><th>Ação</th></tr></thead><tbody>{exports.map(item => <tr key={item.id}><td>{item.filename}</td><td>{item.format}</td><td>{item.rowCount}</td><td>{size(item.sizeBytes)}</td><td><Status value={item.status} /></td><td>{new Date(item.createdAt).toLocaleString('pt-BR')}</td><td>{item.status === 'COMPLETED' && <button className="btn secondary sm" onClick={() => download(`exports/${item.id}/download`, item.filename)}>Baixar novamente</button>}</td></tr>)}</tbody></table></div> : <Empty>Nenhuma exportação gerada.</Empty>}</section>
   </Shell>;
 }

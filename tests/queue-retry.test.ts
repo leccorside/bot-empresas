@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ensureProspectingJob } from '../packages/queues/src';
+import { ensureProspectingJob, ensureWebsiteAnalysisJob } from '../packages/queues/src';
 
 describe('retomada de jobs de prospecção', () => {
   it('recoloca um job falho na fila sem criar duplicata', async () => {
@@ -26,5 +26,12 @@ describe('retomada de jobs de prospecção', () => {
     expect(job.retry).not.toHaveBeenCalled();
     expect(job.remove).not.toHaveBeenCalled();
     expect(queue.add).not.toHaveBeenCalled();
+  });
+
+  it('retoma a análise de website com ID determinístico', async () => {
+    const replacement = { id: 'website-analysis-analysis-1' };
+    const queue = { getJob: vi.fn().mockResolvedValue(null), add: vi.fn().mockResolvedValue(replacement) };
+    await expect(ensureWebsiteAnalysisJob(queue as any, 'analysis-1')).resolves.toBe(replacement);
+    expect(queue.add).toHaveBeenCalledWith('analyze-website', { analysisId: 'analysis-1' }, { jobId: 'website-analysis-analysis-1' });
   });
 });

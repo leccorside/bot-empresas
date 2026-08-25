@@ -1,8 +1,8 @@
 import { Worker, Job } from 'bullmq';
-import { persistDiscoveryProgress, prisma, recordServiceHeartbeat } from '@prospector/database';
+import { createWebsiteAnalysisIntent, persistDiscoveryProgress, prisma, recordServiceHeartbeat } from '@prospector/database';
 import type { ProspectingRun, SearchCell } from '@prospector/database';
-import { queueOptions, QUEUES } from '@prospector/queues';
-import { GooglePlacesProvider, WhatsAppCloudProvider } from '@prospector/integrations';
+import { enqueueWebsiteAnalysis, queueOptions, QUEUES } from '@prospector/queues';
+import { analyzeWebsite, GooglePlacesProvider, websiteAnalysisVersion, WhatsAppCloudProvider } from '@prospector/integrations';
 import { calculateLeadScore, generateGeographicGrid, logger, normalizePhone, normalizeText, phoneType } from '@prospector/shared';
 import type { GeographicBounds } from '@prospector/shared';
 
@@ -12,7 +12,14 @@ const provider=new GooglePlacesProvider();
 class RunCancelledError extends Error {}
 
 async function automationPaused(){const row=await prisma.systemSetting.findUnique({where:{key:'automation'}});return Boolean((row?.value as any)?.paused)}
-async function analyzeWebsite(url?:string|null){if(!url)return{siteStatus:'NO_WEBSITE' as const,hasHttps:null,httpStatus:null,responseMs:null,title:null};const started=Date.now();try{const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),10000);const response=await fetch(url,{signal:controller.signal,headers:{'User-Agent':'LocalProspector/1.0'}});const html=(await response.text()).slice(0,200000);clearTimeout(timer);const responseMs=Date.now()-started;const title=html.match(/<title[^>]*>(.*?)<\/title>/is)?.[1]?.replace(/\s+/g,' ').trim();const siteStatus=response.ok?(responseMs<2000?'GOOD':'AVERAGE'):'POOR';return{siteStatus:siteStatus as 'GOOD'|'AVERAGE'|'POOR',hasHttps:url.startsWith('https://'),httpStatus:response.status,responseMs,title}}catch{return{siteStatus:'POOR' as const,hasHttps:url.startsWith('https://'),httpStatus:null,responseMs:Date.now()-started,title:null}}}
+async function scheduleWebsiteAnalysis(businessId:string,url:string,force=false){
+  const version=websiteAnalysisVersion(url);
+  const intent=await createWebsiteAnalysisIntent({businessId,url,version,force});
+  if(!intent.shouldEnqueue)return intent.analysis;
+  const job=await enqueueWebsiteAnalysis(intent.analysis.id);
+  await prisma.jobRecord.update({where:{idempotencyKey:intent.analysis.idempotencyKey},data:{bullJobId:job.id}});
+  return intent.analysis;
+}
 
 function persistedBounds(run: ProspectingRun): GeographicBounds | null {
   return [run.boundarySouth,run.boundaryNorth,run.boundaryWest,run.boundaryEast].every(value=>value!=null)
@@ -58,12 +65,17 @@ async function processCell(run: ProspectingRun, cell: SearchCell, jobLog: Return
         const normalizedPhone=normalizePhone(item.phone);const normalizedName=normalizeText(item.name);const normalizedAddress=normalizeText(item.address??'');
         const existing=await prisma.business.findUnique({where:{provider_providerId:{provider:item.provider,providerId:item.providerId}}});
         if(existing&&await prisma.discoveryEvent.findUnique({where:{runId_businessId:{runId:run.id,businessId:existing.id}}}))continue;
-        const site=await analyzeWebsite(item.website);const score=calculateLeadScore({website:item.website,siteStatus:site.siteStatus,reviewsCount:item.reviewsCount,phone:item.phone,siteResponseMs:site.responseMs,hasHttps:site.hasHttps});
-        await prisma.$transaction(async tx=>{
-          const business=await tx.business.upsert({where:{provider_providerId:{provider:item.provider,providerId:item.providerId}},update:{...item,normalizedName,normalizedAddress,normalizedPhone,lastSeenAt:new Date(),siteStatus:site.siteStatus,siteHttpStatus:site.httpStatus,siteResponseMs:site.responseMs,hasHttps:site.hasHttps,pageTitle:site.title,websiteCheckedAt:new Date(),leadScore:score.score,scoreClass:score.scoreClass},create:{...item,normalizedName,normalizedAddress,normalizedPhone,siteStatus:site.siteStatus,siteHttpStatus:site.httpStatus,siteResponseMs:site.responseMs,hasHttps:site.hasHttps,pageTitle:site.title,websiteCheckedAt:new Date(),leadScore:score.score,scoreClass:score.scoreClass}});
+        const website=item.website??null,websiteChanged=(existing?.website??null)!==website;
+        const currentSiteStatus=website?(websiteChanged?'UNKNOWN':existing?.siteStatus??'UNKNOWN'):'NO_WEBSITE';
+        const score=calculateLeadScore({website,siteStatus:currentSiteStatus,reviewsCount:item.reviewsCount,phone:item.phone,siteResponseMs:websiteChanged?null:existing?.siteResponseMs,hasHttps:websiteChanged?null:existing?.hasHttps});
+        const resetWebsiteAnalysis=websiteChanged?{siteStatus:currentSiteStatus,siteHttpStatus:null,siteResponseMs:null,hasHttps:null,siteFinalUrl:null,siteSslValid:null,hasViewport:null,pageTitle:null,metaDescription:null,isWordPress:null,technologies:[],websiteAnalysisVersion:null,websiteCheckedAt:null}:{};
+        const business=await prisma.$transaction(async tx=>{
+          const business=await tx.business.upsert({where:{provider_providerId:{provider:item.provider,providerId:item.providerId}},update:{...item,website,normalizedName,normalizedAddress,normalizedPhone,lastSeenAt:new Date(),...resetWebsiteAnalysis,leadScore:score.score,scoreClass:score.scoreClass},create:{...item,website,normalizedName,normalizedAddress,normalizedPhone,siteStatus:currentSiteStatus,leadScore:score.score,scoreClass:score.scoreClass}});
           if(normalizedPhone)await tx.businessPhone.upsert({where:{normalizedPhone},update:{businessId:business.id,phone:item.phone!},create:{businessId:business.id,phone:item.phone!,normalizedPhone,type:phoneType(normalizedPhone)}});
           await persistDiscoveryProgress(tx,{runId:run.id,businessId:business.id,cellId:cell.id,wasNew:!existing,page:page+1,nextPageToken:found.nextPageToken,snapshot:{rating:item.rating,reviewsCount:item.reviewsCount,website:item.website,phone:item.phone}});
+          return business;
         });
+        if(website)await scheduleWebsiteAnalysis(business.id,website).catch(error=>cellLog.warn({businessId:business.id,error:error.message},'website analysis queued for reconciliation'));
       }
       page++;token=found.nextPageToken;
       await prisma.$transaction([
@@ -120,6 +132,35 @@ async function processRun(job:Job<{runId:string}>){
   }finally{clearInterval(heartbeat)}
 }
 
+async function processWebsiteAnalysis(job:Job<{analysisId:string}>){
+  const analysisLog=log.child({jobId:job.id,analysisId:job.data.analysisId});
+  const analysis=await prisma.websiteAnalysis.findUnique({where:{id:job.data.analysisId},include:{business:{include:{phones:true}}}});
+  if(!analysis||['COMPLETED','CANCELLED'].includes(analysis.status))return;
+  await prisma.websiteAnalysis.update({where:{id:analysis.id},data:{status:'ACTIVE',attempts:{increment:1},startedAt:new Date(),completedAt:null,errorMessage:null}});
+  try{
+    const result=await analyzeWebsite(analysis.url);
+    const current=await prisma.websiteAnalysis.findUnique({where:{id:analysis.id},select:{status:true}});
+    if(current?.status==='CANCELLED'){analysisLog.warn('website analysis cancelled');return}
+    const score=calculateLeadScore({website:analysis.business.website,siteStatus:result.status,reviewsCount:analysis.business.reviewsCount,phone:analysis.business.phone,whatsapp:analysis.business.phones.some(phone=>phone.whatsappStatus==='AVAILABLE'),siteResponseMs:result.responseMs,hasHttps:result.hasHttps});
+    await prisma.$transaction([
+      prisma.websiteAnalysis.update({where:{id:analysis.id},data:{status:'COMPLETED',finalUrl:result.finalUrl,httpStatus:result.httpStatus,responseMs:result.responseMs,hasHttps:result.hasHttps,sslValid:result.sslValid,hasViewport:result.hasViewport,title:result.title,description:result.description,isWordPress:result.isWordPress,technologies:result.technologies,errorMessage:null,completedAt:new Date()}}),
+      prisma.business.updateMany({where:{id:analysis.businessId,website:analysis.url},data:{siteStatus:result.status,siteHttpStatus:result.httpStatus,siteResponseMs:result.responseMs,hasHttps:result.hasHttps,siteFinalUrl:result.finalUrl,siteSslValid:result.sslValid,hasViewport:result.hasViewport,pageTitle:result.title,metaDescription:result.description,isWordPress:result.isWordPress,technologies:result.technologies,websiteAnalysisVersion:analysis.version,websiteCheckedAt:new Date(),leadScore:score.score,scoreClass:score.scoreClass}}),
+      prisma.jobRecord.update({where:{idempotencyKey:analysis.idempotencyKey},data:{state:'COMPLETED',errorMessage:null,completedAt:new Date()}}),
+    ]);
+    analysisLog.info({businessId:analysis.businessId,status:result.status,httpStatus:result.httpStatus,responseMs:result.responseMs,technologies:result.technologies},'website analysis completed');
+  }catch(error:any){
+    const hasHttps=/^https:/i.test(analysis.url);
+    const score=calculateLeadScore({website:analysis.business.website,siteStatus:'POOR',reviewsCount:analysis.business.reviewsCount,phone:analysis.business.phone,whatsapp:analysis.business.phones.some(phone=>phone.whatsappStatus==='AVAILABLE'),hasHttps});
+    await prisma.$transaction([
+      prisma.websiteAnalysis.update({where:{id:analysis.id},data:{status:'FAILED',hasHttps,sslValid:hasHttps?false:null,errorMessage:error.message}}),
+      prisma.business.updateMany({where:{id:analysis.businessId,website:analysis.url},data:{siteStatus:'POOR',hasHttps,siteSslValid:hasHttps?false:null,websiteAnalysisVersion:analysis.version,websiteCheckedAt:new Date(),leadScore:score.score,scoreClass:score.scoreClass}}),
+      prisma.jobRecord.update({where:{idempotencyKey:analysis.idempotencyKey},data:{state:'FAILED',errorMessage:error.message}}),
+    ]).catch(()=>{});
+    analysisLog.error({businessId:analysis.businessId,error:error.message},'website analysis failed');
+    throw error;
+  }
+}
+
 async function processCampaign(job:Job<{campaignId:string}>){
   const campaignLog=whatsappLog.child({jobId:job.id,campaignId:job.data.campaignId});
   campaignLog.info('campaign job started');
@@ -144,9 +185,11 @@ async function processCampaign(job:Job<{campaignId:string}>){
 }
 
 const prospectWorker=new Worker(QUEUES.prospecting,processRun,{...queueOptions(),concurrency:Number(process.env.WORKER_CONCURRENCY??5),limiter:{max:Number(process.env.MAX_REQUESTS_PER_SECOND??5),duration:1000}});
+const websiteWorker=new Worker(QUEUES.websiteAnalysis,processWebsiteAnalysis,{...queueOptions(),concurrency:Number(process.env.WEBSITE_ANALYZER_CONCURRENCY??3),limiter:{max:Number(process.env.WEBSITE_ANALYZER_REQUESTS_PER_SECOND??3),duration:1000}});
 const campaignWorker=new Worker(QUEUES.campaign,processCampaign,{...queueOptions(),concurrency:1});
-for(const worker of [prospectWorker,campaignWorker]){worker.on('active',j=>prisma.jobRecord.updateMany({where:{bullJobId:j.id},data:{state:'ACTIVE',startedAt:new Date(),attempts:{increment:1}}}).catch(()=>{}));worker.on('failed',(j,e)=>log.error({jobId:j?.id,runId:(j?.data as any)?.runId,campaignId:(j?.data as any)?.campaignId,error:e.message},'job failed'))}
-const serviceHeartbeatTimer=setInterval(()=>recordServiceHeartbeat('worker').catch(error=>log.error({error:error.message},'worker heartbeat failed')),15000);
-recordServiceHeartbeat('worker').catch(error=>log.error({error:error.message},'worker heartbeat failed'));
-async function shutdown(signal:string){log.info({signal},'graceful shutdown');clearInterval(serviceHeartbeatTimer);await Promise.all([prospectWorker.close(),campaignWorker.close()]);await prisma.$disconnect();process.exit(0)}
+for(const worker of [prospectWorker,websiteWorker,campaignWorker]){worker.on('active',j=>prisma.jobRecord.updateMany({where:{bullJobId:j.id},data:{state:'ACTIVE',startedAt:new Date(),attempts:{increment:1}}}).catch(()=>{}));worker.on('failed',(j,e)=>log.error({jobId:j?.id,runId:(j?.data as any)?.runId,analysisId:(j?.data as any)?.analysisId,campaignId:(j?.data as any)?.campaignId,error:e.message},'job failed'))}
+const heartbeat=()=>Promise.all([recordServiceHeartbeat('worker'),recordServiceHeartbeat('website-analyzer')]).catch(error=>log.error({error:error.message},'worker heartbeat failed'));
+const serviceHeartbeatTimer=setInterval(heartbeat,15000);
+heartbeat();
+async function shutdown(signal:string){log.info({signal},'graceful shutdown');clearInterval(serviceHeartbeatTimer);await Promise.all([prospectWorker.close(),websiteWorker.close(),campaignWorker.close()]);await prisma.$disconnect();process.exit(0)}
 process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));log.info('worker online');whatsappLog.info('whatsapp processor online');

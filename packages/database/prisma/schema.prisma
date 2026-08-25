@@ -265,7 +265,14 @@ model Business {
   siteHttpStatus Int?
   siteResponseMs Int?
   hasHttps Boolean?
+  siteFinalUrl String?
+  siteSslValid Boolean?
+  hasViewport Boolean?
   pageTitle String?
+  metaDescription String?
+  isWordPress Boolean?
+  technologies Json @default("[]")
+  websiteAnalysisVersion String?
   phone String?
   normalizedPhone String?
   rating Float?
@@ -282,6 +289,7 @@ model Business {
   updatedAt DateTime @updatedAt
   phones BusinessPhone[]
   snapshots BusinessSnapshot[]
+  websiteAnalyses WebsiteAnalysis[]
   discoveries DiscoveryEvent[]
   leadEvents LeadEvent[]
   messages CampaignMessage[]
@@ -290,6 +298,35 @@ model Business {
   @@index([city, state, category])
   @@index([leadScore, leadStatus])
   @@index([normalizedName, normalizedPhone, normalizedAddress])
+}
+
+model WebsiteAnalysis {
+  id String @id @default(cuid())
+  businessId String
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  version String
+  idempotencyKey String @unique
+  url String
+  finalUrl String?
+  status JobState @default(WAITING)
+  httpStatus Int?
+  responseMs Int?
+  hasHttps Boolean?
+  sslValid Boolean?
+  hasViewport Boolean?
+  title String?
+  description String?
+  isWordPress Boolean?
+  technologies Json @default("[]")
+  attempts Int @default(0)
+  errorMessage String?
+  startedAt DateTime?
+  completedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([businessId, version])
+  @@index([status, updatedAt])
+  @@index([businessId, createdAt])
 }
 
 model BusinessPhone {

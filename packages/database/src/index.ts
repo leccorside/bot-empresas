@@ -38,4 +38,21 @@ export async function persistDiscoveryProgress(tx: Prisma.TransactionClient, inp
   return { inserted: discovery.count === 1 };
 }
 
+export async function createWebsiteAnalysisIntent(input: { businessId: string; url: string; version: string; force?: boolean }) {
+  return prisma.$transaction(async tx => {
+    const existing = await tx.websiteAnalysis.findUnique({ where: { businessId_version: { businessId: input.businessId, version: input.version } } });
+    if (existing?.status === 'COMPLETED' && !input.force) return { analysis: existing, shouldEnqueue: false };
+    const idempotencyKey = `website-analysis:${input.businessId}:${input.version}`;
+    const analysis = existing
+      ? await tx.websiteAnalysis.update({ where: { id: existing.id }, data: input.force ? { status: 'WAITING', errorMessage: null, startedAt: null, completedAt: null } : {} })
+      : await tx.websiteAnalysis.create({ data: { businessId: input.businessId, url: input.url, version: input.version, idempotencyKey } });
+    await tx.jobRecord.upsert({
+      where: { idempotencyKey },
+      update: { queue: 'website-analysis', name: 'analyze-website', state: 'WAITING', errorMessage: null, completedAt: null, payload: { analysisId: analysis.id, businessId: input.businessId, version: input.version } },
+      create: { queue: 'website-analysis', name: 'analyze-website', idempotencyKey, payload: { analysisId: analysis.id, businessId: input.businessId, version: input.version } },
+    });
+    return { analysis, shouldEnqueue: true };
+  });
+}
+
 export * from '@prisma/client';

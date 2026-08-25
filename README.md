@@ -23,6 +23,8 @@ Sem `GOOGLE_MAPS_API_KEY`, o sistema usa resultados de demonstração determiní
 
 Cada prospecção resolve o viewport da cidade pela Places API (New), divide-o em células geográficas persistentes e restringe cada busca ao retângulo da célula. O progresso pode ser acompanhado na coluna **Células** e em `GET /runs/:id/cells`. Ajuste `GRID_CELL_SIZE_METERS`, `GRID_MAX_CELLS` e `GOOGLE_PLACES_MAX_PAGES_PER_CELL` no `.env` para controlar cobertura, custo e volume. A resolução do viewport e as buscas usam somente a Places API (New); não é necessário habilitar a Geocoding API.
 
+Empresas com website são enviadas para a fila persistente **Website Analyzer**. O worker verifica status HTTP, HTTPS/SSL, tempo de resposta, viewport, title, description, WordPress e tecnologias, atualiza o Lead Score e mantém o resultado em `WebsiteAnalysis`. A análise também pode ser refeita na tela **Empresas** ou por `POST /businesses/:id/website-analysis`; o histórico fica em `GET /businesses/:id/website-analyses`. Destinos locais, redes privadas, portas não web e redirects inseguros são bloqueados.
+
 ## Operação e resiliência
 
 Use `docker compose down` para parar sem apagar dados. Apenas `docker compose down -v` remove volumes. O scheduler reconcilia o estado a cada 30 segundos; apagar o volume Redis não apaga empresas, runs, checkpoints, schedules ou campanhas.

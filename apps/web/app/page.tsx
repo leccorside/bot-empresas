@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { Empty, Shell, Status } from '../components/Shell';
 
-const services = [['API', 'api'], ['POSTGRES', 'database'], ['REDIS', 'redis'], ['WORKER', 'worker'], ['SCHEDULER', 'scheduler'], ['RECOVERY', 'recovery'], ['RECONCILIATION', 'reconciliation']];
+const services = [['API', 'api'], ['POSTGRES', 'database'], ['REDIS', 'redis'], ['WORKER', 'worker'], ['WEBSITE ANALYZER', 'websiteAnalyzer'], ['SCHEDULER', 'scheduler'], ['RECOVERY', 'recovery'], ['RECONCILIATION', 'reconciliation']];
 
 function formatBytes(bytes?: number) {
   if (bytes == null) return '—';
@@ -53,7 +53,7 @@ export default function Dashboard() {
 
     <div className="grid operationalGrid">
       <section className="card"><h2 className="sectionTitle">Saúde dos serviços</h2><div className="health">{services.map(([label, key]) => <div className="healthRow" key={key}><span>{label}</span><span className="healthDetail">{key === 'database' && `${data?.latencyMs?.database ?? '—'} ms `}{key === 'redis' && `${data?.latencyMs?.redis ?? '—'} ms `}<Status value={data?.services?.[key] ?? 'CHECKING'} /></span></div>)}</div></section>
-      <section className="card"><h2 className="sectionTitle">Filas BullMQ em tempo real</h2><table className="table compactTable"><thead><tr><th>Fila</th><th>Espera</th><th>Ativos</th><th>Delay</th><th>Falhos</th></tr></thead><tbody>{[['Prospecção', data?.queues?.prospecting], ['Campanhas', data?.queues?.campaigns]].map(([label, queue]: any) => <tr key={label}><td>{label}</td><td>{queue?.waiting ?? '—'}</td><td>{queue?.active ?? '—'}</td><td>{queue?.delayed ?? '—'}</td><td>{queue?.failed ?? '—'}</td></tr>)}</tbody></table><div className="durableJobs"><span>Estado durável</span><span>WAITING <b>{data?.jobs?.WAITING ?? 0}</b></span><span>ACTIVE <b>{data?.jobs?.ACTIVE ?? 0}</b></span><span>FAILED <b>{data?.jobs?.FAILED ?? 0}</b></span></div></section>
+      <section className="card"><h2 className="sectionTitle">Filas BullMQ em tempo real</h2><table className="table compactTable"><thead><tr><th>Fila</th><th>Espera</th><th>Ativos</th><th>Delay</th><th>Falhos</th></tr></thead><tbody>{[['Prospecção', data?.queues?.prospecting], ['Website Analyzer', data?.queues?.websiteAnalysis], ['Campanhas', data?.queues?.campaigns]].map(([label, queue]: any) => <tr key={label}><td>{label}</td><td>{queue?.waiting ?? '—'}</td><td>{queue?.active ?? '—'}</td><td>{queue?.delayed ?? '—'}</td><td>{queue?.failed ?? '—'}</td></tr>)}</tbody></table><div className="durableJobs"><span>Estado durável</span><span>WAITING <b>{data?.jobs?.WAITING ?? 0}</b></span><span>ACTIVE <b>{data?.jobs?.ACTIVE ?? 0}</b></span><span>FAILED <b>{data?.jobs?.FAILED ?? 0}</b></span></div></section>
       <section className="card"><h2 className="sectionTitle">Armazenamento persistente</h2><div className="storageMetrics"><div><span>PostgreSQL</span><b>{formatBytes(data?.storage?.databaseBytes)}</b></div><div><span>Exportações</span><b>{formatBytes(data?.storage?.exportsBytes)}</b><small>{data?.storage?.exportFiles ?? 0} arquivos catalogados</small></div><div><span>Logs</span><b>{formatBytes(data?.storage?.logsBytes)}</b></div><div><span>Uptime da API</span><b>{duration(new Date(Date.now() - (data?.uptimeSeconds ?? 0) * 1000).toISOString(), new Date().toISOString())}</b></div></div></section>
     </div>
 

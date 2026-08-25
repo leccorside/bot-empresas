@@ -1,5 +1,6 @@
 import type { Queue } from 'bullmq';
 import { prisma } from '@prospector/database';
+import { ensureWebsiteAnalysisJob } from '@prospector/queues';
 
 export const prospectingJobId = (runId: string) => `prospecting-${runId}`;
 export const campaignJobId = (campaignId: string) => `campaign-${campaignId}`;
@@ -56,4 +57,23 @@ export async function rebuildCampaignQueue(queue: Queue, now = new Date(), stale
     }
   }
   return { durable: candidates.length, rebuilt };
+}
+
+export async function rebuildWebsiteAnalysisQueue(queue: Queue, now = new Date(), staleSeconds = 120) {
+  const staleAt = new Date(now.getTime() - staleSeconds * 1000);
+  const analyses = await prisma.websiteAnalysis.findMany({ where: { OR: [{ status: { in: ['WAITING', 'RECOVERING'] } }, { status: 'ACTIVE', updatedAt: { lte: staleAt } }] } });
+  let rebuilt = 0;
+  for (const analysis of analyses) {
+    const recovering = analysis.status === 'ACTIVE' || analysis.status === 'RECOVERING';
+    if (analysis.status === 'ACTIVE') await prisma.websiteAnalysis.update({ where: { id: analysis.id }, data: { status: 'RECOVERING' } });
+    const before = await queue.getJob(`website-analysis-${analysis.id}`);
+    const job = await ensureWebsiteAnalysisJob(queue, analysis.id);
+    if (!before) rebuilt++;
+    await prisma.jobRecord.upsert({
+      where: { idempotencyKey: analysis.idempotencyKey },
+      update: { bullJobId: job.id, state: recovering ? 'RECOVERING' : 'WAITING', errorMessage: null, payload: { analysisId: analysis.id, businessId: analysis.businessId, version: analysis.version } },
+      create: { queue: 'website-analysis', name: 'analyze-website', bullJobId: job.id, idempotencyKey: analysis.idempotencyKey, state: recovering ? 'RECOVERING' : 'WAITING', payload: { analysisId: analysis.id, businessId: analysis.businessId, version: analysis.version } },
+    });
+  }
+  return { durable: analyses.length, rebuilt };
 }

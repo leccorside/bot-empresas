@@ -2,7 +2,7 @@ import { Queue } from 'bullmq';
 import type { QueueOptions } from 'bullmq';
 import IORedis from 'ioredis';
 
-export const QUEUES = { prospecting: 'prospecting', campaign: 'campaign', deadLetter: 'dead-letter' } as const;
+export const QUEUES = { prospecting: 'prospecting', websiteAnalysis: 'website-analysis', campaign: 'campaign', deadLetter: 'dead-letter' } as const;
 export const DEFAULT_JOB_OPTIONS = { attempts: 5, backoff: { type: 'exponential' as const, delay: 2000 }, removeOnComplete: 500, removeOnFail: 1000 };
 export function redisConnection() {
   const connection = new IORedis({ host: process.env.REDIS_HOST ?? 'redis', port: Number(process.env.REDIS_PORT ?? 6379), maxRetriesPerRequest: null });
@@ -11,6 +11,7 @@ export function redisConnection() {
 }
 export function queueOptions(): QueueOptions { return { connection: redisConnection(), defaultJobOptions: DEFAULT_JOB_OPTIONS }; }
 export const prospectingQueue = () => new Queue(QUEUES.prospecting, queueOptions());
+export const websiteAnalysisQueue = () => new Queue(QUEUES.websiteAnalysis, queueOptions());
 export const campaignQueue = () => new Queue(QUEUES.campaign, queueOptions());
 export async function ensureProspectingJob(queue: Pick<Queue, 'getJob' | 'add'>, runId: string) {
   const jobId = `prospecting-${runId}`;
@@ -29,4 +30,21 @@ export async function ensureProspectingJob(queue: Pick<Queue, 'getJob' | 'add'>,
 export async function enqueueRun(runId: string) {
   const queue = prospectingQueue();
   try { return await ensureProspectingJob(queue, runId); } finally { await queue.close(); }
+}
+
+export async function ensureWebsiteAnalysisJob(queue: Pick<Queue, 'getJob' | 'add'>, analysisId: string) {
+  const jobId = `website-analysis-${analysisId}`;
+  const existing = await queue.getJob(jobId);
+  if (existing) {
+    const state = await existing.getState();
+    if (state === 'failed') { await existing.retry(); return existing; }
+    if (state !== 'completed') return existing;
+    await existing.remove();
+  }
+  return queue.add('analyze-website', { analysisId }, { jobId });
+}
+
+export async function enqueueWebsiteAnalysis(analysisId: string) {
+  const queue = websiteAnalysisQueue();
+  try { return await ensureWebsiteAnalysisJob(queue, analysisId); } finally { await queue.close(); }
 }

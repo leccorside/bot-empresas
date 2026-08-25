@@ -1,11 +1,12 @@
 import { randomUUID } from 'crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { persistDiscoveryProgress, prisma } from '../packages/database/src';
+import { createWebsiteAnalysisIntent, persistDiscoveryProgress, prisma } from '../packages/database/src';
 import { generateGeographicGrid } from '../packages/shared/src';
 
 const createdRunIds: string[] = [];
 const createdBusinessIds: string[] = [];
 const createdExportIds: string[] = [];
+const createdJobKeys: string[] = [];
 
 async function createScenario() {
   const suffix = randomUUID();
@@ -25,6 +26,7 @@ beforeAll(() => prisma.$connect());
 
 afterEach(async () => {
   if (createdRunIds.length) await prisma.prospectingRun.deleteMany({ where: { id: { in: createdRunIds.splice(0) } } });
+  if (createdJobKeys.length) await prisma.jobRecord.deleteMany({ where: { idempotencyKey: { in: createdJobKeys.splice(0) } } });
   if (createdBusinessIds.length) await prisma.business.deleteMany({ where: { id: { in: createdBusinessIds.splice(0) } } });
   if (createdExportIds.length) await prisma.exportRecord.deleteMany({ where: { id: { in: createdExportIds.splice(0) } } });
 });
@@ -88,5 +90,20 @@ describe('persistência e idempotência no PostgreSQL', () => {
     expect(pending).toHaveLength(cells.length - 1);
     expect(pending[0].sequence).toBe(1);
     expect(pending[0]).toMatchObject({ southLatitude: cells[1].south, northLatitude: cells[1].north, westLongitude: cells[1].west, eastLongitude: cells[1].east });
+  });
+
+  it('mantém uma única intenção idempotente por empresa e versão do analisador', async () => {
+    const suffix = randomUUID(), businessId = `test-website-business-${suffix}`;
+    createdBusinessIds.push(businessId);
+    await prisma.business.create({ data: { id: businessId, provider: 'TEST', providerId: `website-${suffix}`, name: 'Empresa Website', normalizedName: 'empresa website', category: 'Teste', city: 'Goiânia', state: 'GO', website: 'https://example.test' } });
+    const input = { businessId, url: 'https://example.test', version: 'v1:abc' };
+    createdJobKeys.push(`website-analysis:${businessId}:v1:abc`);
+    const first = await createWebsiteAnalysisIntent(input), second = await createWebsiteAnalysisIntent(input);
+    expect(second.analysis.id).toBe(first.analysis.id);
+    await prisma.websiteAnalysis.update({ where: { id: first.analysis.id }, data: { status: 'COMPLETED', completedAt: new Date() } });
+    await expect(createWebsiteAnalysisIntent(input)).resolves.toMatchObject({ shouldEnqueue: false });
+    await expect(createWebsiteAnalysisIntent({ ...input, force: true })).resolves.toMatchObject({ shouldEnqueue: true, analysis: { status: 'WAITING' } });
+    await expect(prisma.websiteAnalysis.count({ where: { businessId } })).resolves.toBe(1);
+    await expect(prisma.jobRecord.count({ where: { idempotencyKey: `website-analysis:${businessId}:v1:abc` } })).resolves.toBe(1);
   });
 });
