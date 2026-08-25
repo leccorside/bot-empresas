@@ -2,13 +2,14 @@ import { Worker, Job } from 'bullmq';
 import { createWebsiteAnalysisIntent, persistDiscoveryProgress, prisma, recordServiceHeartbeat } from '@prospector/database';
 import type { ProspectingRun, SearchCell } from '@prospector/database';
 import { enqueueWebsiteAnalysis, queueOptions, QUEUES } from '@prospector/queues';
-import { analyzeWebsite, GooglePlacesProvider, websiteAnalysisVersion, WhatsAppCloudProvider } from '@prospector/integrations';
+import { analyzeWebsite, GooglePlacesProvider, PageSpeedProvider, websiteAnalysisVersion, WhatsAppCloudProvider } from '@prospector/integrations';
 import { calculateLeadScore, generateGeographicGrid, logger, normalizePhone, normalizeText, phoneType } from '@prospector/shared';
 import type { GeographicBounds } from '@prospector/shared';
 
 const log=logger('worker');
 const whatsappLog=logger('whatsapp');
 const provider=new GooglePlacesProvider();
+const pageSpeedProvider=new PageSpeedProvider();
 class RunCancelledError extends Error {}
 
 async function automationPaused(){const row=await prisma.systemSetting.findUnique({where:{key:'automation'}});return Boolean((row?.value as any)?.paused)}
@@ -141,13 +142,14 @@ async function processWebsiteAnalysis(job:Job<{analysisId:string}>){
     const result=await analyzeWebsite(analysis.url);
     const current=await prisma.websiteAnalysis.findUnique({where:{id:analysis.id},select:{status:true}});
     if(current?.status==='CANCELLED'){analysisLog.warn('website analysis cancelled');return}
-    const score=calculateLeadScore({website:analysis.business.website,siteStatus:result.status,reviewsCount:analysis.business.reviewsCount,phone:analysis.business.phone,whatsapp:analysis.business.phones.some(phone=>phone.whatsappStatus==='AVAILABLE'),siteResponseMs:result.responseMs,hasHttps:result.hasHttps});
+    const pageSpeed=await pageSpeedProvider.analyze(analysis.url).catch(error=>{analysisLog.warn({error:error.message},'pagespeed analysis failed');return {performanceScore:null}});
+    const score=calculateLeadScore({website:analysis.business.website,siteStatus:result.status,reviewsCount:analysis.business.reviewsCount,phone:analysis.business.phone,whatsapp:analysis.business.phones.some(phone=>phone.whatsappStatus==='AVAILABLE'),siteResponseMs:result.responseMs,hasHttps:result.hasHttps,performanceScore:pageSpeed.performanceScore});
     await prisma.$transaction([
-      prisma.websiteAnalysis.update({where:{id:analysis.id},data:{status:'COMPLETED',finalUrl:result.finalUrl,httpStatus:result.httpStatus,responseMs:result.responseMs,hasHttps:result.hasHttps,sslValid:result.sslValid,hasViewport:result.hasViewport,title:result.title,description:result.description,isWordPress:result.isWordPress,technologies:result.technologies,errorMessage:null,completedAt:new Date()}}),
-      prisma.business.updateMany({where:{id:analysis.businessId,website:analysis.url},data:{siteStatus:result.status,siteHttpStatus:result.httpStatus,siteResponseMs:result.responseMs,hasHttps:result.hasHttps,siteFinalUrl:result.finalUrl,siteSslValid:result.sslValid,hasViewport:result.hasViewport,pageTitle:result.title,metaDescription:result.description,isWordPress:result.isWordPress,technologies:result.technologies,websiteAnalysisVersion:analysis.version,websiteCheckedAt:new Date(),leadScore:score.score,scoreClass:score.scoreClass}}),
+      prisma.websiteAnalysis.update({where:{id:analysis.id},data:{status:'COMPLETED',finalUrl:result.finalUrl,httpStatus:result.httpStatus,responseMs:result.responseMs,hasHttps:result.hasHttps,sslValid:result.sslValid,hasViewport:result.hasViewport,title:result.title,description:result.description,isWordPress:result.isWordPress,technologies:result.technologies,performanceScore:pageSpeed.performanceScore,pageSpeedFetchedAt:pageSpeed.performanceScore!=null?new Date():null,errorMessage:null,completedAt:new Date()}}),
+      prisma.business.updateMany({where:{id:analysis.businessId,website:analysis.url},data:{siteStatus:result.status,siteHttpStatus:result.httpStatus,siteResponseMs:result.responseMs,hasHttps:result.hasHttps,siteFinalUrl:result.finalUrl,siteSslValid:result.sslValid,hasViewport:result.hasViewport,pageTitle:result.title,metaDescription:result.description,isWordPress:result.isWordPress,technologies:result.technologies,websiteAnalysisVersion:analysis.version,websiteCheckedAt:new Date(),performanceScore:pageSpeed.performanceScore,leadScore:score.score,scoreClass:score.scoreClass}}),
       prisma.jobRecord.update({where:{idempotencyKey:analysis.idempotencyKey},data:{state:'COMPLETED',errorMessage:null,completedAt:new Date()}}),
     ]);
-    analysisLog.info({businessId:analysis.businessId,status:result.status,httpStatus:result.httpStatus,responseMs:result.responseMs,technologies:result.technologies},'website analysis completed');
+    analysisLog.info({businessId:analysis.businessId,status:result.status,httpStatus:result.httpStatus,responseMs:result.responseMs,performanceScore:pageSpeed.performanceScore,technologies:result.technologies},'website analysis completed');
   }catch(error:any){
     const hasHttps=/^https:/i.test(analysis.url);
     const score=calculateLeadScore({website:analysis.business.website,siteStatus:'POOR',reviewsCount:analysis.business.reviewsCount,phone:analysis.business.phone,whatsapp:analysis.business.phones.some(phone=>phone.whatsappStatus==='AVAILABLE'),hasHttps});

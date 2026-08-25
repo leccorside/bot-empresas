@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { Empty, Shell, Status } from '../components/Shell';
 
-const services = [['API', 'api'], ['POSTGRES', 'database'], ['REDIS', 'redis'], ['WORKER', 'worker'], ['WEBSITE ANALYZER', 'websiteAnalyzer'], ['SCHEDULER', 'scheduler'], ['RECOVERY', 'recovery'], ['RECONCILIATION', 'reconciliation']];
+const services = [['API', 'api'], ['POSTGRES', 'database'], ['REDIS', 'redis'], ['WORKER', 'worker'], ['WEBSITE ANALYZER', 'websiteAnalyzer'], ['SCHEDULER', 'scheduler'], ['RECOVERY', 'recovery'], ['RECONCILIATION', 'reconciliation'], ['REFRESH INCREMENTAL', 'websiteRefresh']];
 
 function formatBytes(bytes?: number) {
   if (bytes == null) return '—';

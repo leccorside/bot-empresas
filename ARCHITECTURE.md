@@ -4,7 +4,7 @@ O Local Prospector é um monólito modular distribuído em quatro processos: Web
 
 `API → PostgreSQL (intenção) → BullMQ (execução) → Worker → PostgreSQL (resultado)`
 
-O Website Analyzer possui fila e estado persistente próprios. A descoberta apenas registra a intenção; workers independentes analisam os sites com concorrência e limite de requisições configuráveis. O scheduler reconstrói análises pendentes ou abandonadas a partir do PostgreSQL após perda do Redis.
+O Website Analyzer possui fila e estado persistente próprios. A descoberta apenas registra a intenção; workers independentes analisam os sites com concorrência e limite de requisições configuráveis. O scheduler reconstrói análises pendentes ou abandonadas a partir do PostgreSQL após perda do Redis, e também reenfileira periodicamente análises `COMPLETED` mais antigas que `WEBSITE_REFRESH_DAYS` (refresh incremental, em pequenos lotes por ciclo) para não repetir análises recentes desnecessariamente.
 
 Os módulos de domínio são prospecções, empresas, automações, filas, CRM, campanhas, exportações e saúde. Toda execução tem status persistente, heartbeat e checkpoints. O scheduler reconcilia periodicamente PostgreSQL e Redis e recupera execuções abandonadas.
 

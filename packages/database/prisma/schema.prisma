@@ -273,6 +273,7 @@ model Business {
   isWordPress Boolean?
   technologies Json @default("[]")
   websiteAnalysisVersion String?
+  performanceScore Int?
   phone String?
   normalizedPhone String?
   rating Float?
@@ -318,6 +319,8 @@ model WebsiteAnalysis {
   description String?
   isWordPress Boolean?
   technologies Json @default("[]")
+  performanceScore Int?
+  pageSpeedFetchedAt DateTime?
   attempts Int @default(0)
   errorMessage String?
   startedAt DateTime?

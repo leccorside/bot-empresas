@@ -1,5 +1,6 @@
 import type { GeographicBounds } from '@prospector/shared';
 export * from './website.ts';
+export * from './pagespeed.ts';
 
 export type DiscoveredBusiness = { provider: string; providerId: string; name: string; category: string; address?: string; city: string; state: string; country: string; latitude?: number; longitude?: number; website?: string; phone?: string; rating?: number; reviewsCount?: number; mapsUrl?: string };
 export type BusinessDiscoveryInput = { country: string; state: string; city: string; category: string; pageToken?: string; bounds?: GeographicBounds };

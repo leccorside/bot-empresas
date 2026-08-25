@@ -1,6 +1,8 @@
 import type { Queue } from 'bullmq';
-import { prisma } from '@prospector/database';
+import { createWebsiteAnalysisIntent, prisma } from '@prospector/database';
 import { ensureWebsiteAnalysisJob } from '@prospector/queues';
+import { websiteAnalysisVersion } from '@prospector/integrations';
+import { staleWebsiteCutoff } from './policy';
 
 export const prospectingJobId = (runId: string) => `prospecting-${runId}`;
 export const campaignJobId = (campaignId: string) => `campaign-${campaignId}`;
@@ -76,4 +78,25 @@ export async function rebuildWebsiteAnalysisQueue(queue: Queue, now = new Date()
     });
   }
   return { durable: analyses.length, rebuilt };
+}
+
+export async function refreshStaleWebsiteAnalyses(queue: Queue, now = new Date(), staleDays = 30, batchSize = 20) {
+  if (staleDays <= 0) return { eligible: 0, refreshed: 0 };
+  const staleAt = staleWebsiteCutoff(now, staleDays);
+  const candidates = await prisma.business.findMany({
+    where: { website: { not: null }, websiteCheckedAt: { lte: staleAt } },
+    orderBy: { websiteCheckedAt: 'asc' },
+    take: Math.max(1, batchSize),
+    select: { id: true, website: true },
+  });
+  let refreshed = 0;
+  for (const business of candidates) {
+    if (!business.website) continue;
+    const version = websiteAnalysisVersion(business.website);
+    const intent = await createWebsiteAnalysisIntent({ businessId: business.id, url: business.website, version, force: true });
+    const job = await ensureWebsiteAnalysisJob(queue, intent.analysis.id);
+    await prisma.jobRecord.update({ where: { idempotencyKey: intent.analysis.idempotencyKey }, data: { bullJobId: job.id } }).catch(() => {});
+    refreshed++;
+  }
+  return { eligible: candidates.length, refreshed };
 }

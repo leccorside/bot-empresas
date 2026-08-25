@@ -18,7 +18,7 @@ function WebsiteSummary({ business }: { business: any }) {
   if (!business.website) return <Status value="NO_WEBSITE" />;
   const safeUrl = /^https?:\/\//i.test(business.website) ? business.website : `https://${business.website}`;
   const technologies = Array.isArray(business.technologies) ? business.technologies.join(', ') : '';
-  return <div className="websiteSummary"><div><a href={safeUrl} target="_blank" rel="noreferrer">Abrir site</a> <Status value={business.siteStatus} /></div><small>{business.siteHttpStatus ?? 'HTTP —'} · {business.siteResponseMs != null ? `${business.siteResponseMs} ms` : 'tempo —'} · {business.hasHttps ? 'HTTPS' : 'sem HTTPS'} · {business.siteSslValid ? 'SSL válido' : 'SSL —'} · {business.hasViewport ? 'responsivo' : 'viewport —'}</small>{technologies && <small title={technologies}>{technologies}</small>}</div>;
+  return <div className="websiteSummary"><div><a href={safeUrl} target="_blank" rel="noreferrer">Abrir site</a> <Status value={business.siteStatus} /></div><small>{business.siteHttpStatus ?? 'HTTP —'} · {business.siteResponseMs != null ? `${business.siteResponseMs} ms` : 'tempo —'} · {business.hasHttps ? 'HTTPS' : 'sem HTTPS'} · {business.siteSslValid ? 'SSL válido' : 'SSL —'} · {business.hasViewport ? 'responsivo' : 'viewport —'} · {business.performanceScore != null ? `PageSpeed ${business.performanceScore}` : 'PageSpeed —'}</small>{technologies && <small title={technologies}>{technologies}</small>}</div>;
 }
 
 export default function Businesses() {

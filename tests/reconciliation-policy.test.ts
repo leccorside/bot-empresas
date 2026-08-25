@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { campaignJobId, campaignRecoveryDelay, prospectingJobId, shouldRecoverCampaign, syncQueuePauseState } from '../apps/scheduler/src/reconciliation';
+import { staleWebsiteCutoff } from '../apps/scheduler/src/policy';
 
 describe('política de reconstrução após perda do Redis', () => {
   const now = new Date('2026-08-25T12:00:00.000Z');
@@ -19,6 +20,11 @@ describe('política de reconstrução após perda do Redis', () => {
     expect(shouldRecoverCampaign('RUNNING', new Date('2026-08-25T11:57:59.000Z'), now, 120)).toBe(true);
     expect(shouldRecoverCampaign('RUNNING', new Date('2026-08-25T11:59:00.000Z'), now, 120)).toBe(false);
     expect(shouldRecoverCampaign('COMPLETED', new Date('2026-08-25T11:00:00.000Z'), now)).toBe(false);
+  });
+
+  it('calcula o corte de obsolescência do refresh incremental de website', () => {
+    expect(staleWebsiteCutoff(now, 30)).toEqual(new Date('2026-07-26T12:00:00.000Z'));
+    expect(staleWebsiteCutoff(now, 0)).toEqual(now);
   });
 
   it('restaura nas filas o estado de pausa persistido no PostgreSQL', async () => {

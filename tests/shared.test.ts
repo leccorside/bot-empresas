@@ -14,6 +14,8 @@ describe('normalização e score',()=>{
   it('pontua ausência de site e avaliações',()=>expect(calculateLeadScore({reviewsCount:0})).toEqual({score:65,scoreClass:'HIGH'}));
   it('pontua site ruim, lento e sem HTTPS',()=>expect(calculateLeadScore({website:'http://example.test',siteStatus:'POOR',reviewsCount:50,siteResponseMs:4000,hasHttps:false})).toEqual({score:50,scoreClass:'MEDIUM'}));
   it('não penaliza site saudável com muitas avaliações',()=>expect(calculateLeadScore({website:'https://example.test',siteStatus:'GOOD',reviewsCount:150,siteResponseMs:500,hasHttps:true})).toEqual({score:0,scoreClass:'LOW'}));
+  it('penaliza performance PageSpeed abaixo de 50',()=>expect(calculateLeadScore({website:'https://example.test',siteStatus:'GOOD',reviewsCount:150,siteResponseMs:500,hasHttps:true,performanceScore:35})).toEqual({score:15,scoreClass:'LOW'}));
+  it('não penaliza performance PageSpeed saudável',()=>expect(calculateLeadScore({website:'https://example.test',siteStatus:'GOOD',reviewsCount:150,siteResponseMs:500,hasHttps:true,performanceScore:80})).toEqual({score:0,scoreClass:'LOW'}));
 });
 
 describe('saúde por heartbeat',()=>{

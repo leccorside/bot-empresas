@@ -25,6 +25,10 @@ Cada prospecção resolve o viewport da cidade pela Places API (New), divide-o e
 
 Empresas com website são enviadas para a fila persistente **Website Analyzer**. O worker verifica status HTTP, HTTPS/SSL, tempo de resposta, viewport, title, description, WordPress e tecnologias, atualiza o Lead Score e mantém o resultado em `WebsiteAnalysis`. A análise também pode ser refeita na tela **Empresas** ou por `POST /businesses/:id/website-analysis`; o histórico fica em `GET /businesses/:id/website-analyses`. Destinos locais, redes privadas, portas não web e redirects inseguros são bloqueados.
 
+Sem `PAGESPEED_API_KEY`, o score de performance usa um resultado de demonstração determinístico; com a chave, o worker consulta o PageSpeed Insights (`PAGESPEED_STRATEGY`, `PAGESPEED_TIMEOUT_MS`) e grava `performanceScore` em `WebsiteAnalysis` e `Business`. Um score de performance abaixo de 50 soma pontos ao Lead Score. Falhas na consulta ao PageSpeed não derrubam a análise do site: o restante do resultado é persistido normalmente.
+
+O scheduler também reenfileira automaticamente análises de website concluídas há mais de `WEBSITE_REFRESH_DAYS` dias, em lotes de `WEBSITE_REFRESH_BATCH_SIZE` por ciclo, para manter o Website Analyzer atualizado sem reprocessar sites analisados recentemente.
+
 ## Operação e resiliência
 
 Use `docker compose down` para parar sem apagar dados. Apenas `docker compose down -v` remove volumes. O scheduler reconcilia o estado a cada 30 segundos; apagar o volume Redis não apaga empresas, runs, checkpoints, schedules ou campanhas.
