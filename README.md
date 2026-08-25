@@ -43,6 +43,8 @@ A tela **CRM & Campanhas** mostra o pipeline completo de leads em colunas por st
 
 A tela **Analytics** (`GET /analytics?days=`) mostra crescimento de empresas descobertas por dia, distribuição de Lead Score, funil de status do CRM, status de site e telefones por WhatsApp, além dos rankings por categoria e cidade — tudo calculado sob demanda a partir do PostgreSQL, sem tabelas ou jobs adicionais. O período é configurável (7 a 180 dias, padrão 30).
 
+A mesma tela traz a seção **Analytics comercial** (`GET /analytics/commercial?days=`): funil completo (empresas encontradas → novas → leads qualificados → mensagens enviadas/entregues/lidas/respondidas → interessados → propostas → clientes) e as taxas Delivery/Read/Reply/Interest/Conversion Rate, calculadas a partir dos timestamps de `CampaignMessage` (`sentAt`/`deliveredAt`/`readAt`/`repliedAt`, preenchidos pelos webhooks do WhatsApp), com detalhamento por campanha no período.
+
 ## Autopilot
 
 Na tela **Automações**, cadastre cidades/categorias na fila do Autopilot e ligue o botão **Autopilot**. Com o Autopilot ligado, o scheduler despacha automaticamente uma prospecção por ciclo para a cidade menos recentemente executada, respeitando os limites configuráveis (cidades simultâneas, delay entre disparos, limite diário e limite mensal — persistidos no PostgreSQL, editáveis na própria tela). Ativar o Autopilot não autoriza envio de campanhas: isso continua exigindo `AUTO_SEND_CAMPAIGNS=true` e `DRY_RUN=false` separadamente. **Parar automações** também pausa o Autopilot imediatamente.

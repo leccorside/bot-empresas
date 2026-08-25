@@ -106,6 +106,41 @@ export class ApiService {
       byCategory,byCity,
     };
   }
+  async commercialAnalytics(rawDays?:any){
+    const days=Math.min(180,Math.max(7,Number(rawDays)||30));
+    const since=new Date(Date.now()-days*24*60*60*1000);
+    const rate=(numerator:number,denominator:number)=>denominator>0?Math.round((numerator/denominator)*1000)/10:0;
+    const [businessesFound,businessesNew,qualifiedLeads,interested,proposals,customers,sent,delivered,read,replied,failed,blocked,campaigns]=await Promise.all([
+      prisma.business.count(),
+      prisma.business.count({where:{firstSeenAt:{gte:since}}}),
+      prisma.business.count({where:{leadStatus:{notIn:['NEW']}}}),
+      prisma.business.count({where:{leadStatus:'INTERESTED'}}),
+      prisma.business.count({where:{leadStatus:'PROPOSAL'}}),
+      prisma.business.count({where:{leadStatus:'CUSTOMER'}}),
+      prisma.campaignMessage.count({where:{createdAt:{gte:since},sentAt:{not:null}}}),
+      prisma.campaignMessage.count({where:{createdAt:{gte:since},deliveredAt:{not:null}}}),
+      prisma.campaignMessage.count({where:{createdAt:{gte:since},readAt:{not:null}}}),
+      prisma.campaignMessage.count({where:{createdAt:{gte:since},repliedAt:{not:null}}}),
+      prisma.campaignMessage.count({where:{createdAt:{gte:since},status:'FAILED'}}),
+      prisma.campaignMessage.count({where:{createdAt:{gte:since},status:'BLOCKED'}}),
+      prisma.campaign.findMany({where:{createdAt:{gte:since}},orderBy:{createdAt:'desc'},include:{_count:{select:{messages:true}}}}),
+    ]);
+    const campaignBreakdown=await Promise.all(campaigns.map(async campaign=>{
+      const [campaignSent,campaignDelivered,campaignRead,campaignReplied]=await Promise.all([
+        prisma.campaignMessage.count({where:{campaignId:campaign.id,sentAt:{not:null}}}),
+        prisma.campaignMessage.count({where:{campaignId:campaign.id,deliveredAt:{not:null}}}),
+        prisma.campaignMessage.count({where:{campaignId:campaign.id,readAt:{not:null}}}),
+        prisma.campaignMessage.count({where:{campaignId:campaign.id,repliedAt:{not:null}}}),
+      ]);
+      return{id:campaign.id,name:campaign.name,status:campaign.status,total:campaign._count.messages,sent:campaignSent,delivered:campaignDelivered,read:campaignRead,replied:campaignReplied,deliveryRate:rate(campaignDelivered,campaignSent),readRate:rate(campaignRead,campaignDelivered),replyRate:rate(campaignReplied,campaignSent)};
+    }));
+    return{
+      days,
+      funnel:{businessesFound,businessesNew,qualifiedLeads,messagesSent:sent,messagesDelivered:delivered,messagesRead:read,messagesReplied:replied,messagesFailed:failed,messagesBlocked:blocked,interested,proposals,customers},
+      rates:{deliveryRate:rate(delivered,sent),readRate:rate(read,delivered),replyRate:rate(replied,sent),interestRate:rate(interested,replied),conversionRate:rate(customers,sent)},
+      campaigns:campaignBreakdown,
+    };
+  }
   jobs(){return prisma.jobRecord.findMany({orderBy:{createdAt:'desc'},take:200,include:{run:{select:{city:true,state:true,status:true}}}})}
   async jobAction(id:string,action:string){const job=await prisma.jobRecord.findUnique({where:{id}});if(!job)throw new NotFoundException();if(action==='retry'&&job.runId){await prisma.jobRecord.update({where:{id},data:{state:'RECOVERING',errorMessage:null}});await enqueueRun(job.runId);return{ok:true}}if(action==='retry'&&job.queue==='website-analysis'){const analysisId=String((job.payload as any)?.analysisId??'');const analysis=await prisma.websiteAnalysis.findUnique({where:{id:analysisId}});if(!analysis)throw new NotFoundException('Análise não encontrada');await prisma.$transaction([prisma.websiteAnalysis.update({where:{id:analysis.id},data:{status:'RECOVERING',errorMessage:null}}),prisma.jobRecord.update({where:{id},data:{state:'RECOVERING',errorMessage:null}})]);await enqueueWebsiteAnalysis(analysis.id);return{ok:true}}if(action==='cancel'){if(job.queue==='website-analysis'){const analysisId=String((job.payload as any)?.analysisId??'');if(analysisId)await prisma.websiteAnalysis.updateMany({where:{id:analysisId},data:{status:'CANCELLED'}});const queue=websiteAnalysisQueue();try{await (await queue.getJob(`website-analysis-${analysisId}`))?.remove()}catch{}finally{await queue.close()}}return prisma.jobRecord.update({where:{id},data:{state:'CANCELLED'}})}throw new BadRequestException('Ação inválida')}
   campaigns(){return prisma.campaign.findMany({orderBy:{createdAt:'desc'},include:{_count:{select:{messages:true}}}})}

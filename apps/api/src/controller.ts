@@ -29,6 +29,7 @@ export class ApiController {
   @Get('autopilot/config') autopilotConfig(){return this.service.autopilotConfig()}
   @Patch('autopilot/config') updateAutopilotConfig(@Body() body:any){return this.service.updateAutopilotConfig(body)}
   @Get('analytics') analytics(@Query('days') days:any){return this.service.analytics(days)}
+  @Get('analytics/commercial') commercialAnalytics(@Query('days') days:any){return this.service.commercialAnalytics(days)}
   @Get('jobs') jobs(){return this.service.jobs()}
   @Post('jobs/:id/:action') jobAction(@Param('id') id:string,@Param('action') action:string){return this.service.jobAction(id,action)}
   @Get('templates') templates(){return this.service.templates()}

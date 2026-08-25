@@ -18,14 +18,22 @@ function Bars({ data, labels, order }: { data: Record<string, number>; labels?: 
   return <div className="barList">{keys.map(key => <div className="barRow" key={key}><span>{labels?.[key] ?? key}</span><div className="barTrack"><i style={{ width: `${((data[key] ?? 0) / max) * 100}%` }} /></div><b>{data[key] ?? 0}</b></div>)}</div>;
 }
 
+const commercialFunnelOrder = ['businessesFound', 'businessesNew', 'qualifiedLeads', 'messagesSent', 'messagesDelivered', 'messagesRead', 'messagesReplied', 'interested', 'proposals', 'customers'];
+const commercialFunnelLabels: Record<string, string> = { businessesFound: 'Empresas encontradas', businessesNew: 'Novas no período', qualifiedLeads: 'Leads qualificados', messagesSent: 'Mensagens enviadas', messagesDelivered: 'Mensagens entregues', messagesRead: 'Mensagens lidas', messagesReplied: 'Respostas', interested: 'Interessados', proposals: 'Propostas', customers: 'Clientes' };
+const rateLabels: Record<string, string> = { deliveryRate: 'Delivery Rate', readRate: 'Read Rate', replyRate: 'Reply Rate', interestRate: 'Interest Rate', conversionRate: 'Conversion Rate' };
+const rateHints: Record<string, string> = { deliveryRate: 'entregues / enviadas', readRate: 'lidas / entregues', replyRate: 'respostas / enviadas', interestRate: 'interessados / respostas', conversionRate: 'clientes / enviadas' };
+
 export default function Analytics() {
   const [days, setDays] = useState(30);
   const [data, setData] = useState<any>(null);
+  const [commercial, setCommercial] = useState<any>(null);
   const [error, setError] = useState('');
 
   async function load(period = days) {
     try { setData(await api(`analytics?days=${period}`)); setError(''); }
     catch (reason: any) { setError(reason.message ?? 'Falha ao carregar analytics'); }
+    try { setCommercial(await api(`analytics/commercial?days=${period}`)); }
+    catch (reason: any) { setError(reason.message ?? 'Falha ao carregar analytics comercial'); }
   }
   useEffect(() => { load(days); }, [days]);
 
@@ -53,9 +61,25 @@ export default function Analytics() {
       <section className="card"><h2 className="sectionTitle">Telefones por status de WhatsApp</h2><Bars data={data?.whatsappStatus ?? {}} labels={whatsappLabels} /></section>
     </div>
 
-    <div className="grid dashboardTables">
+    <div className="grid dashboardTables" style={{ marginBottom: 18 }}>
       <section className="card"><h2 className="sectionTitle">Top categorias</h2>{data?.byCategory?.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Categoria</th><th>Empresas</th><th>Score médio</th></tr></thead><tbody>{data.byCategory.map((row: any) => <tr key={row.category}><td>{row.category}</td><td>{row.count}</td><td>{row.avgScore}</td></tr>)}</tbody></table></div> : <Empty>Sem dados ainda.</Empty>}</section>
       <section className="card"><h2 className="sectionTitle">Top cidades</h2>{data?.byCity?.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Cidade</th><th>Empresas</th><th>Score médio</th></tr></thead><tbody>{data.byCity.map((row: any) => <tr key={`${row.city}-${row.state}`}><td>{row.city}/{row.state}</td><td>{row.count}</td><td>{row.avgScore}</td></tr>)}</tbody></table></div> : <Empty>Sem dados ainda.</Empty>}</section>
     </div>
+
+    <h2 className="sectionTitle" style={{ margin: '4px 0 12px' }}>Analytics comercial</h2>
+    <div className="grid analyticsGrid" style={{ marginBottom: 18 }}>
+      <section className="card"><h2 className="sectionTitle">Funil comercial</h2><Bars data={commercial?.funnel ?? {}} labels={commercialFunnelLabels} order={commercialFunnelOrder} /></section>
+      <section className="card">
+        <h2 className="sectionTitle">Taxas</h2>
+        <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          {Object.keys(rateLabels).map(key => <div className="card" key={key}><div className="metricLabel">{rateLabels[key]}</div><div className="metricValue">{commercial?.rates?.[key] ?? 0}%</div><div className="metricHint">{rateHints[key]}</div></div>)}
+        </div>
+      </section>
+    </div>
+
+    <section className="card">
+      <h2 className="sectionTitle">Campanhas no período</h2>
+      {commercial?.campaigns?.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Campanha</th><th>Status</th><th>Enviadas</th><th>Entregues</th><th>Lidas</th><th>Respondidas</th><th>Delivery</th><th>Read</th><th>Reply</th></tr></thead><tbody>{commercial.campaigns.map((campaign: any) => <tr key={campaign.id}><td>{campaign.name}</td><td>{campaign.status}</td><td>{campaign.sent}</td><td>{campaign.delivered}</td><td>{campaign.read}</td><td>{campaign.replied}</td><td>{campaign.deliveryRate}%</td><td>{campaign.readRate}%</td><td>{campaign.replyRate}%</td></tr>)}</tbody></table></div> : <Empty>Nenhuma campanha criada no período selecionado.</Empty>}
+    </section>
   </Shell>;
 }
