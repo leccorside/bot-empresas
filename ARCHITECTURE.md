@@ -8,4 +8,6 @@ O Website Analyzer possui fila e estado persistente próprios. A descoberta apen
 
 Os módulos de domínio são prospecções, empresas, automações, filas, CRM, campanhas, exportações e saúde. Toda execução tem status persistente, heartbeat e checkpoints. O scheduler reconcilia periodicamente PostgreSQL e Redis e recupera execuções abandonadas.
 
+O Autopilot mantém uma fila persistente de cidades/categorias (`AutopilotTarget`). A cada ciclo do scheduler, se ligado e não pausado, um alvo é despachado (o menos recentemente executado primeiro) respeitando limites de cidades simultâneas, delay entre disparos e cotas diária/mensal — todos configuráveis e persistidos no PostgreSQL, nunca no Redis.
+
 As integrações ficam atrás de interfaces. O Google Places Text Search é o provider inicial; sem chave, um provider de demonstração determinístico mantém o fluxo local testável. Mensagens usam WhatsApp Cloud API e nunca são enviadas em `DRY_RUN`.

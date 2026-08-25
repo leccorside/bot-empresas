@@ -198,6 +198,28 @@ export function calculateLeadScore(input: LeadScoreInput) {
 }
 export const terminalRunStates = ['COMPLETED', 'FAILED', 'CANCELLED'] as const;
 
+export type AutopilotConfig = { maxConcurrentCities: number; delaySeconds: number; dailyLimit: number; monthlyLimit: number };
+export const defaultAutopilotConfig: AutopilotConfig = { maxConcurrentCities: 1, delaySeconds: 300, dailyLimit: 10, monthlyLimit: 200 };
+export function parseAutopilotConfig(raw: unknown): AutopilotConfig {
+  const value = (raw ?? {}) as Partial<Record<keyof AutopilotConfig, unknown>>;
+  const clamp = (input: unknown, fallback: number) => { const n = Math.floor(Number(input)); return Number.isFinite(n) && n > 0 ? n : fallback; };
+  return {
+    maxConcurrentCities: clamp(value.maxConcurrentCities, defaultAutopilotConfig.maxConcurrentCities),
+    delaySeconds: clamp(value.delaySeconds, defaultAutopilotConfig.delaySeconds),
+    dailyLimit: clamp(value.dailyLimit, defaultAutopilotConfig.dailyLimit),
+    monthlyLimit: clamp(value.monthlyLimit, defaultAutopilotConfig.monthlyLimit),
+  };
+}
+export function shouldDispatchAutopilot(input: { activeCount: number; dispatchedToday: number; dispatchedThisMonth: number; lastDispatchedAt: Date | null; now: Date; config: AutopilotConfig }) {
+  if (input.activeCount >= input.config.maxConcurrentCities) return false;
+  if (input.dispatchedToday >= input.config.dailyLimit) return false;
+  if (input.dispatchedThisMonth >= input.config.monthlyLimit) return false;
+  if (input.lastDispatchedAt && input.now.getTime() - input.lastDispatchedAt.getTime() < input.config.delaySeconds * 1000) return false;
+  return true;
+}
+export function startOfLocalDay(now: Date) { const date = new Date(now); date.setHours(0, 0, 0, 0); return date; }
+export function startOfLocalMonth(now: Date) { const date = new Date(now); date.setDate(1); date.setHours(0, 0, 0, 0); return date; }
+
 export function heartbeatStatus(value: unknown, maxAgeMs: number, now = new Date()): 'ONLINE' | 'OFFLINE' {
   if (!value || typeof value !== 'object') return 'OFFLINE';
   const heartbeatAt = (value as { heartbeatAt?: unknown }).heartbeatAt;

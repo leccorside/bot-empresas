@@ -34,21 +34,48 @@ function cronDetails(expression?: string | null) {
   return { specificTime: `${parts[1].padStart(2, '0')}:${parts[0].padStart(2, '0')}`, specificDays: parts[4].split(',') };
 }
 
+const initialTargetForm = { country: 'Brasil', state: 'Goiás', city: '', category: 'Todos' };
+
 export default function Automations() {
   const [items, setItems] = useState<any[]>([]);
-  const [settings, setSettings] = useState<any>({ automation: {} });
+  const [settings, setSettings] = useState<any>({ automation: {}, autopilotConfig: {} });
   const [form, setForm] = useState<any>(initialForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [targets, setTargets] = useState<any[]>([]);
+  const [targetForm, setTargetForm] = useState<any>(initialTargetForm);
+  const [configForm, setConfigForm] = useState<any>({ maxConcurrentCities: 1, delaySeconds: 300, dailyLimit: 10, monthlyLimit: 200 });
 
   async function load() {
     try {
-      const [schedules, config] = await Promise.all([api('schedules'), api('settings')]);
-      setItems(schedules); setSettings(config); setError('');
+      const [schedules, config, autopilotTargets] = await Promise.all([api('schedules'), api('settings'), api('autopilot/targets')]);
+      setItems(schedules); setSettings(config); setTargets(autopilotTargets); setConfigForm(config.autopilotConfig); setError('');
     } catch (reason: any) { setError(reason.message); }
   }
   useEffect(() => { load(); }, []);
+
+  async function addTarget(event: FormEvent) {
+    event.preventDefault(); setBusy(true); setError('');
+    try { await api('autopilot/targets', { method: 'POST', body: JSON.stringify(targetForm) }); setTargetForm(initialTargetForm); await load(); }
+    catch (reason: any) { setError(reason.message); } finally { setBusy(false); }
+  }
+  async function toggleTarget(target: any) {
+    setBusy(true); setError('');
+    try { await api(`autopilot/targets/${target.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: !target.enabled }) }); await load(); }
+    catch (reason: any) { setError(reason.message); } finally { setBusy(false); }
+  }
+  async function removeTarget(target: any) {
+    if (!confirm(`Remover “${target.city}/${target.state}” (${target.category}) da fila do autopilot?`)) return;
+    setBusy(true); setError('');
+    try { await api(`autopilot/targets/${target.id}`, { method: 'DELETE' }); await load(); }
+    catch (reason: any) { setError(reason.message); } finally { setBusy(false); }
+  }
+  async function saveAutopilotConfig(event: FormEvent) {
+    event.preventDefault(); setBusy(true); setError('');
+    try { await api('autopilot/config', { method: 'PATCH', body: JSON.stringify(configForm) }); await load(); }
+    catch (reason: any) { setError(reason.message); } finally { setBusy(false); }
+  }
 
   function setField(field: string, value: any) { setForm((current: any) => ({ ...current, [field]: value })); }
   function reset() { setEditingId(null); setForm(initialForm); setError(''); }
@@ -96,6 +123,23 @@ export default function Automations() {
 
   return <Shell title="Automações" subtitle="Agendamentos persistidos e executados automaticamente" badges={<span className={`badge ${settings.automation?.paused ? 'red' : 'green'}`}>{settings.automation?.paused ? 'AUTOMAÇÕES PARADAS' : 'AUTOMAÇÕES ATIVAS'}</span>}>
     <div className="toolbar"><button disabled={busy} className={`btn ${settings.automation?.paused ? '' : 'danger'}`} onClick={() => emergency(settings.automation?.paused ? 'resume' : 'stop')}>{settings.automation?.paused ? 'Retomar automações' : 'Parar automações'}</button><button disabled={busy} className="btn secondary" onClick={() => emergency(settings.automation?.autopilot ? 'autopilot-off' : 'autopilot-on')}>Autopilot {settings.automation?.autopilot ? 'ON' : 'OFF'}</button></div>
+    <section className="card scheduleCard">
+      <div className="filtersHeader"><h2 className="sectionTitle">Autopilot — fila de cidades</h2><span>{settings.automation?.autopilot ? 'Processando a fila automaticamente' : 'Autopilot desligado — ative acima para começar a processar a fila'}</span></div>
+      <form className="filterGrid" style={{ marginBottom: 16 }} onSubmit={saveAutopilotConfig}>
+        <label className="field"><span>Cidades simultâneas</span><input className="input" type="number" min={1} max={50} value={configForm.maxConcurrentCities} onChange={e => setConfigForm((c: any) => ({ ...c, maxConcurrentCities: Number(e.target.value) }))} /></label>
+        <label className="field"><span>Delay entre disparos (s)</span><input className="input" type="number" min={0} max={86400} value={configForm.delaySeconds} onChange={e => setConfigForm((c: any) => ({ ...c, delaySeconds: Number(e.target.value) }))} /></label>
+        <label className="field"><span>Limite diário</span><input className="input" type="number" min={1} max={1000} value={configForm.dailyLimit} onChange={e => setConfigForm((c: any) => ({ ...c, dailyLimit: Number(e.target.value) }))} /></label>
+        <label className="field"><span>Limite mensal</span><input className="input" type="number" min={1} max={20000} value={configForm.monthlyLimit} onChange={e => setConfigForm((c: any) => ({ ...c, monthlyLimit: Number(e.target.value) }))} /></label>
+        <div className="filterActions"><button className="btn secondary" disabled={busy}>Salvar limites</button></div>
+      </form>
+      <form className="scheduleForm" onSubmit={addTarget}>
+        <label className="field"><span>Estado</span><input className="input" value={targetForm.state} onChange={e => setTargetForm((c: any) => ({ ...c, state: e.target.value }))} required /></label>
+        <label className="field"><span>Cidade</span><input className="input" value={targetForm.city} onChange={e => setTargetForm((c: any) => ({ ...c, city: e.target.value }))} required /></label>
+        <label className="field"><span>Categoria</span><input className="input" value={targetForm.category} onChange={e => setTargetForm((c: any) => ({ ...c, category: e.target.value }))} placeholder="Todos, Hotéis, Restaurantes..." required /></label>
+        <div className="scheduleActions"><button className="btn" disabled={busy}>Adicionar à fila</button></div>
+      </form>
+      {targets.length ? <div className="tableWrap" style={{ marginTop: 16 }}><table className="table"><thead><tr><th>Destino</th><th>Categoria</th><th>Última execução</th><th>Status</th><th>Ações</th></tr></thead><tbody>{targets.map(target => <tr key={target.id}><td>{target.city}/{target.state}</td><td>{target.category}</td><td>{target.lastDispatchedAt ? new Date(target.lastDispatchedAt).toLocaleString('pt-BR') : '—'}</td><td><Status value={target.enabled ? 'ONLINE' : 'PAUSED'} /></td><td><div className="rowActions"><button disabled={busy} className="btn secondary sm" onClick={() => toggleTarget(target)}>{target.enabled ? 'Pausar' : 'Ativar'}</button><button disabled={busy} className="btn danger sm" onClick={() => removeTarget(target)}>Remover</button></div></td></tr>)}</tbody></table></div> : <Empty>Nenhuma cidade na fila do autopilot ainda.</Empty>}
+    </section>
     <section className="card scheduleCard">
       <div className="filtersHeader"><h2 className="sectionTitle">{editingId ? 'Editar agendamento' : 'Novo agendamento'}</h2>{error && <span className="filterError">{error}</span>}</div>
       <form className="scheduleForm" onSubmit={submit}>

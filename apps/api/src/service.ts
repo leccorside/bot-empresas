@@ -8,8 +8,8 @@ import path from 'path';
 import { createWebsiteAnalysisIntent, prisma } from '@prospector/database';
 import { enqueueRun, enqueueWebsiteAnalysis, prospectingQueue, campaignQueue, websiteAnalysisQueue } from '@prospector/queues';
 import { websiteAnalysisVersion } from '@prospector/integrations';
-import { heartbeatStatus, nextScheduleOccurrence, validateCronExpression, validateTimezone } from '@prospector/shared';
-import { businessFilterSchema, createRunSchema, createScheduleSchema } from '@prospector/validation';
+import { heartbeatStatus, nextScheduleOccurrence, parseAutopilotConfig, validateCronExpression, validateTimezone } from '@prospector/shared';
+import { autopilotConfigSchema, autopilotTargetSchema, businessFilterSchema, createRunSchema, createScheduleSchema } from '@prospector/validation';
 import { businessExportValues, exportColumns, persistentExportFilename, renderBusinessesCsv, safeExportPath } from './exports';
 import { directorySize, emptyQueueCounts, mergeQueueCounts, normalizeQueueCounts } from './operations';
 
@@ -63,6 +63,12 @@ export class ApiService {
   async createSchedule(raw:any){const body=this.parseSchedule(raw);return prisma.schedule.create({data:this.normalizeSchedule(body) as any})}
   async updateSchedule(id:string,raw:any){const current=await prisma.schedule.findUnique({where:{id}});if(!current)throw new NotFoundException('Agendamento não encontrado');const body=this.parseSchedule({...current,...raw});return prisma.schedule.update({where:{id},data:this.normalizeSchedule(body) as any})}
   async deleteSchedule(id:string){const current=await prisma.schedule.findUnique({where:{id}});if(!current)throw new NotFoundException('Agendamento não encontrado');return prisma.schedule.delete({where:{id}})}
+  autopilotTargets(){return prisma.autopilotTarget.findMany({orderBy:{createdAt:'desc'}})}
+  async createAutopilotTarget(raw:any){const parsed=autopilotTargetSchema.parse(raw);return prisma.autopilotTarget.create({data:parsed})}
+  async updateAutopilotTarget(id:string,raw:any){const current=await prisma.autopilotTarget.findUnique({where:{id}});if(!current)throw new NotFoundException('Alvo do autopilot não encontrado');const parsed=autopilotTargetSchema.parse({...current,...raw});return prisma.autopilotTarget.update({where:{id},data:parsed})}
+  async deleteAutopilotTarget(id:string){const current=await prisma.autopilotTarget.findUnique({where:{id}});if(!current)throw new NotFoundException('Alvo do autopilot não encontrado');return prisma.autopilotTarget.delete({where:{id}})}
+  async autopilotConfig(){const row=await prisma.systemSetting.findUnique({where:{key:'autopilotConfig'}});return parseAutopilotConfig(row?.value)}
+  async updateAutopilotConfig(raw:any){const parsed=autopilotConfigSchema.parse(raw);await prisma.systemSetting.upsert({where:{key:'autopilotConfig'},update:{value:parsed},create:{key:'autopilotConfig',value:parsed}});return parsed}
   private parseSchedule(raw:any){const parsed=createScheduleSchema.safeParse(raw);if(!parsed.success)throw new BadRequestException({message:'Agendamento inválido',issues:parsed.error.issues.map(issue=>({field:issue.path.join('.'),message:issue.message}))});return parsed.data}
   private normalizeSchedule(body:any){
     if(!validateTimezone(body.timezone))throw new BadRequestException('Fuso horário inválido');
@@ -80,7 +86,7 @@ export class ApiService {
   campaigns(){return prisma.campaign.findMany({orderBy:{createdAt:'desc'},include:{_count:{select:{messages:true}}}})}
   createCampaign(body:any){return prisma.campaign.create({data:{name:body.name,messageTemplate:body.messageTemplate,filters:body.filters??{},scheduledAt:body.scheduledAt?new Date(body.scheduledAt):null}})}
   async scheduleCampaign(id:string){const campaign=await prisma.campaign.findUnique({where:{id}});if(!campaign)throw new NotFoundException();const filters=campaign.filters as any;const businesses=await prisma.business.findMany({where:{phone:{not:null},leadScore:{gte:Number(filters.minScore??0)},city:filters.city||undefined,suppressions:{none:{}}}});await prisma.$transaction(businesses.map(b=>prisma.campaignMessage.upsert({where:{campaignId_businessId:{campaignId:id,businessId:b.id}},update:{},create:{campaignId:id,businessId:b.id,phone:b.normalizedPhone??b.phone!,idempotencyKey:`campaign:${id}:${b.id}`,scheduledAt:campaign.scheduledAt??new Date()}})));await prisma.campaign.update({where:{id},data:{status:'SCHEDULED'}});const q=campaignQueue();await q.add('send-campaign',{campaignId:id},{jobId:`campaign-${id}`,delay:Math.max(0,(campaign.scheduledAt?.getTime()??Date.now())-Date.now())});await q.close();return{selected:businesses.length}}
-  async settings(){const row=await prisma.systemSetting.findUnique({where:{key:'automation'}});return{dryRun:process.env.DRY_RUN!=='false',autoSendCampaigns:process.env.AUTO_SEND_CAMPAIGNS==='true',automation:row?.value??{paused:false,autopilot:false}}}
+  async settings(){const [row,configRow]=await Promise.all([prisma.systemSetting.findUnique({where:{key:'automation'}}),prisma.systemSetting.findUnique({where:{key:'autopilotConfig'}})]);return{dryRun:process.env.DRY_RUN!=='false',autoSendCampaigns:process.env.AUTO_SEND_CAMPAIGNS==='true',automation:row?.value??{paused:false,autopilot:false},autopilotConfig:parseAutopilotConfig(configRow?.value)}}
   async emergency(action:string){if(!['stop','resume','autopilot-on','autopilot-off'].includes(action))throw new BadRequestException();const current=await prisma.systemSetting.findUnique({where:{key:'automation'}});const value:any=current?.value??{};if(action==='stop')value.paused=true;if(action==='resume')value.paused=false;if(action==='autopilot-on')value.autopilot=true;if(action==='autopilot-off')value.autopilot=false;await prisma.systemSetting.upsert({where:{key:'automation'},update:{value},create:{key:'automation',value}});const queues=[prospectingQueue(),websiteAnalysisQueue(),campaignQueue()];for(const q of queues){action==='stop'?await q.pause():action==='resume'?await q.resume():null;await q.close()}return value}
   listExports(){return prisma.exportRecord.findMany({orderBy:{createdAt:'desc'},take:100})}
   async createExport(raw:any){

@@ -13,6 +13,16 @@ export const createScheduleSchema = z.object({
     ctx.addIssue({ code: 'custom', path: ['nextRunAt'], message: 'Próxima execução obrigatória' });
   }
 });
+export const autopilotTargetSchema = z.object({
+  country: z.string().trim().min(2).default('Brasil'), state: z.string().trim().min(2), city: z.string().trim().min(2),
+  category: z.string().trim().min(2).default('Todos'), enabled: z.boolean().default(true),
+});
+export const autopilotConfigSchema = z.object({
+  maxConcurrentCities: z.coerce.number().int().min(1).max(50),
+  delaySeconds: z.coerce.number().int().min(0).max(86400),
+  dailyLimit: z.coerce.number().int().min(1).max(1000),
+  monthlyLimit: z.coerce.number().int().min(1).max(20000),
+});
 const queryBoolean = z.enum(['true', 'false']).transform(value => value === 'true');
 export const businessFilterSchema = z.object({
   search: z.string().trim().optional(), city: z.string().optional(), state: z.string().optional(), category: z.string().optional(),

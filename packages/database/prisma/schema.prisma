@@ -159,10 +159,27 @@ model Schedule {
   @@index([enabled, nextRunAt])
 }
 
+model AutopilotTarget {
+  id String @id @default(cuid())
+  country String @default("Brasil")
+  state String
+  city String
+  category String @default("Todos")
+  enabled Boolean @default(true)
+  lastDispatchedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  runs ProspectingRun[]
+  @@unique([country, state, city, category])
+  @@index([enabled, lastDispatchedAt])
+}
+
 model ProspectingRun {
   id String @id @default(cuid())
   scheduleId String?
   schedule Schedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  autopilotTargetId String?
+  autopilotTarget AutopilotTarget? @relation(fields: [autopilotTargetId], references: [id], onDelete: SetNull)
   country String
   state String
   city String

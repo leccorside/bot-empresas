@@ -29,6 +29,10 @@ Sem `PAGESPEED_API_KEY`, o score de performance usa um resultado de demonstraç�
 
 O scheduler também reenfileira automaticamente análises de website concluídas há mais de `WEBSITE_REFRESH_DAYS` dias, em lotes de `WEBSITE_REFRESH_BATCH_SIZE` por ciclo, para manter o Website Analyzer atualizado sem reprocessar sites analisados recentemente.
 
+## Autopilot
+
+Na tela **Automações**, cadastre cidades/categorias na fila do Autopilot e ligue o botão **Autopilot**. Com o Autopilot ligado, o scheduler despacha automaticamente uma prospecção por ciclo para a cidade menos recentemente executada, respeitando os limites configuráveis (cidades simultâneas, delay entre disparos, limite diário e limite mensal — persistidos no PostgreSQL, editáveis na própria tela). Ativar o Autopilot não autoriza envio de campanhas: isso continua exigindo `AUTO_SEND_CAMPAIGNS=true` e `DRY_RUN=false` separadamente. **Parar automações** também pausa o Autopilot imediatamente.
+
 ## Operação e resiliência
 
 Use `docker compose down` para parar sem apagar dados. Apenas `docker compose down -v` remove volumes. O scheduler reconcilia o estado a cada 30 segundos; apagar o volume Redis não apaga empresas, runs, checkpoints, schedules ou campanhas.
