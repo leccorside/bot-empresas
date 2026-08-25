@@ -114,6 +114,17 @@ enum JobState {
   CANCELLED
 }
 
+enum ExportFormat {
+  CSV
+  XLSX
+}
+
+enum ExportStatus {
+  CREATING
+  COMPLETED
+  FAILED
+}
+
 model User {
   id String @id @default(cuid())
   email String @unique
@@ -379,4 +390,21 @@ model JobRecord {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@index([state, availableAt])
+}
+
+model ExportRecord {
+  id String @id @default(cuid())
+  format ExportFormat
+  status ExportStatus @default(CREATING)
+  filename String @unique
+  storagePath String
+  mimeType String
+  sizeBytes Int @default(0)
+  rowCount Int @default(0)
+  filters Json @default("{}")
+  errorMessage String?
+  createdAt DateTime @default(now())
+  completedAt DateTime?
+  @@index([createdAt])
+  @@index([status])
 }

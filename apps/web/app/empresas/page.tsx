@@ -18,7 +18,9 @@ export default function Businesses() {
   const [data, setData] = useState<any>({ items: [], total: 0 });
   const [options, setOptions] = useState<any>({ locations: [], categories: [], siteStatuses: [], whatsappStatuses: [] });
   const [filters, setFilters] = useState<Filters>(initialFilters);
+  const [exports, setExports] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [exportBusy, setExportBusy] = useState('');
   const [error, setError] = useState('');
   const cities = useMemo(() => options.locations.filter((location: any) => !filters.state || location.state === filters.state), [options.locations, filters.state]);
   const states = useMemo(() => Array.from(new Set<string>(options.locations.map((location: any) => location.state))), [options.locations]);
@@ -33,7 +35,8 @@ export default function Businesses() {
     finally { setLoading(false); }
   }
 
-  useEffect(() => { api('businesses/filter-options').then(setOptions); load(initialFilters); }, []);
+  async function loadExports() { try { setExports(await api('exports')); } catch (requestError: any) { setError(requestError.message); } }
+  useEffect(() => { api('businesses/filter-options').then(setOptions); load(initialFilters); loadExports(); }, []);
   function submit(event: FormEvent) { event.preventDefault(); load(); }
   function clear() { setFilters(initialFilters); load(initialFilters); }
   function update(key: keyof Filters, value: string) { setFilters(current => ({ ...current, [key]: value })); }
@@ -45,6 +48,17 @@ export default function Businesses() {
     const blob = await response.blob(); const url = URL.createObjectURL(blob); const anchor = document.createElement('a');
     anchor.href = url; anchor.download = filename; anchor.click(); URL.revokeObjectURL(url);
   }
+
+  async function createExport(format: 'CSV' | 'XLSX') {
+    setExportBusy(format); setError('');
+    try {
+      const record = await api('exports/businesses', { method: 'POST', body: JSON.stringify({ format, filters }) });
+      await loadExports(); await download(`exports/${record.id}/download`, record.filename);
+    } catch (requestError: any) { setError(requestError.message ?? 'Falha ao gerar exportação'); }
+    finally { setExportBusy(''); }
+  }
+
+  const size = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
 
   return <Shell title="Empresas" subtitle={`${data.total ?? 0} empresas correspondem aos filtros`}>
     <section className="card filtersCard">
@@ -67,7 +81,8 @@ export default function Businesses() {
         <div className="filterActions"><button className="btn" type="submit" disabled={loading}>{loading ? 'Filtrando…' : 'Aplicar filtros'}</button><button className="btn secondary" type="button" onClick={clear}>Limpar</button></div>
       </form>
     </section>
-    <div className="toolbar"><span className="spacer"/><button className="btn secondary" onClick={() => download('exports/businesses.csv', 'empresas.csv')}>CSV</button><button className="btn secondary" onClick={() => download('exports/businesses.xlsx', 'empresas.xlsx')}>XLSX</button></div>
+    <div className="toolbar"><span className="spacer"/><button disabled={Boolean(exportBusy)} className="btn secondary" onClick={() => createExport('CSV')}>{exportBusy === 'CSV' ? 'Gerando CSV…' : 'Exportar CSV'}</button><button disabled={Boolean(exportBusy)} className="btn secondary" onClick={() => createExport('XLSX')}>{exportBusy === 'XLSX' ? 'Gerando XLSX…' : 'Exportar XLSX'}</button></div>
     <section className="card">{data.items.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Empresa</th><th>Categoria</th><th>Cidade</th><th>Telefone</th><th>WhatsApp</th><th>Site</th><th>Rating</th><th>Avaliações</th><th>Lead Score</th><th>CRM</th></tr></thead><tbody>{data.items.map((business: any) => <tr key={business.id}><td><b>{business.name}</b></td><td>{business.category}</td><td>{business.city}/{business.state}</td><td>{business.phone ?? '—'}</td><td>{business.phones?.[0]?.whatsappStatus ?? 'UNKNOWN'}</td><td><Status value={business.siteStatus}/></td><td>{business.rating ?? '—'}</td><td>{business.reviewsCount ?? 0}</td><td><b style={{ color: business.leadScore >= 60 ? 'var(--brand)' : 'inherit' }}>{business.leadScore}</b></td><td><Status value={business.leadStatus}/></td></tr>)}</tbody></table></div> : <Empty>Nenhuma empresa corresponde aos filtros.</Empty>}</section>
+    <section className="card exportHistory"><h2 className="sectionTitle">Exportações persistentes</h2>{exports.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Arquivo</th><th>Formato</th><th>Linhas</th><th>Tamanho</th><th>Status</th><th>Criado</th><th>Ação</th></tr></thead><tbody>{exports.map(item => <tr key={item.id}><td>{item.filename}</td><td>{item.format}</td><td>{item.rowCount}</td><td>{size(item.sizeBytes)}</td><td><Status value={item.status} /></td><td>{new Date(item.createdAt).toLocaleString('pt-BR')}</td><td>{item.status === 'COMPLETED' && <button className="btn secondary sm" onClick={() => download(`exports/${item.id}/download`, item.filename)}>Baixar novamente</button>}</td></tr>)}</tbody></table></div> : <Empty>Nenhuma exportação gerada.</Empty>}</section>
   </Shell>;
 }

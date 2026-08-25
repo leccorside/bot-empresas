@@ -4,6 +4,7 @@ import { persistDiscoveryProgress, prisma } from '../packages/database/src';
 
 const createdRunIds: string[] = [];
 const createdBusinessIds: string[] = [];
+const createdExportIds: string[] = [];
 
 async function createScenario() {
   const suffix = randomUUID();
@@ -24,6 +25,7 @@ beforeAll(() => prisma.$connect());
 afterEach(async () => {
   if (createdRunIds.length) await prisma.prospectingRun.deleteMany({ where: { id: { in: createdRunIds.splice(0) } } });
   if (createdBusinessIds.length) await prisma.business.deleteMany({ where: { id: { in: createdBusinessIds.splice(0) } } });
+  if (createdExportIds.length) await prisma.exportRecord.deleteMany({ where: { id: { in: createdExportIds.splice(0) } } });
 });
 
 afterAll(() => prisma.$disconnect());
@@ -64,5 +66,11 @@ describe('persistência e idempotência no PostgreSQL', () => {
     expect(events).toBe(0);
     expect(snapshots).toBe(0);
     expect(checkpoint.processedItems).toBe(0);
+  });
+
+  it('mantém o catálogo da exportação independente da resposta HTTP', async () => {
+    const id = `test-export-${randomUUID()}`; createdExportIds.push(id);
+    await prisma.exportRecord.create({ data: { id, format: 'CSV', status: 'COMPLETED', filename: `${id}.csv`, storagePath: `/storage/exports/${id}.csv`, mimeType: 'text/csv', sizeBytes: 128, rowCount: 3, filters: { city: 'Goiânia' }, completedAt: new Date() } });
+    await expect(prisma.exportRecord.findUnique({ where: { id } })).resolves.toMatchObject({ status: 'COMPLETED', rowCount: 3, sizeBytes: 128 });
   });
 });

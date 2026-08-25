@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Header, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res } from '@nestjs/common';
 import { ApiService } from './service';
 
 @Controller()
@@ -25,6 +25,9 @@ export class ApiController {
   @Post('campaigns/:id/schedule') scheduleCampaign(@Param('id') id:string){return this.service.scheduleCampaign(id)}
   @Get('settings') settings(){return this.service.settings()}
   @Post('settings/emergency/:action') emergency(@Param('action') action:string){return this.service.emergency(action)}
-  @Get('exports/businesses.csv') @Header('Content-Type','text/csv; charset=utf-8') exportCsv(){return this.service.exportCsv()}
+  @Get('exports') exports(){return this.service.listExports()}
+  @Post('exports/businesses') createExport(@Body() body:any){return this.service.createExport(body)}
+  @Get('exports/:id/download') downloadExport(@Param('id') id:string,@Res() res:any){return this.service.downloadExport(id,res)}
+  @Get('exports/businesses.csv') exportCsv(@Res() res:any){return this.service.exportCsv(res)}
   @Get('exports/businesses.xlsx') exportXlsx(@Res() res:any){return this.service.exportXlsx(res)}
 }

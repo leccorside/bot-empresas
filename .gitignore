@@ -8,3 +8,4 @@ storage/backups/*
 !storage/**/.gitkeep
 coverage/
 *.log
+.playwright-mcp/
