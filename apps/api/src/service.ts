@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import ExcelJS from 'exceljs';
@@ -7,8 +7,8 @@ import { mkdir, rename, stat, unlink, writeFile } from 'fs/promises';
 import path from 'path';
 import { createWebsiteAnalysisIntent, prisma } from '@prospector/database';
 import { enqueueRun, enqueueWebsiteAnalysis, prospectingQueue, campaignQueue, websiteAnalysisQueue } from '@prospector/queues';
-import { websiteAnalysisVersion } from '@prospector/integrations';
-import { heartbeatStatus, nextScheduleOccurrence, parseAutopilotConfig, validateCronExpression, validateTimezone } from '@prospector/shared';
+import { detectOptOutIntent, verifyWhatsAppWebhookSignature, websiteAnalysisVersion } from '@prospector/integrations';
+import { heartbeatStatus, nextScheduleOccurrence, normalizePhone, parseAutopilotConfig, validateCronExpression, validateTimezone } from '@prospector/shared';
 import { autopilotConfigSchema, autopilotTargetSchema, businessFilterSchema, createRunSchema, createScheduleSchema } from '@prospector/validation';
 import { businessExportValues, exportColumns, persistentExportFilename, renderBusinessesCsv, safeExportPath } from './exports';
 import { directorySize, emptyQueueCounts, mergeQueueCounts, normalizeQueueCounts } from './operations';
@@ -109,8 +109,53 @@ export class ApiService {
   jobs(){return prisma.jobRecord.findMany({orderBy:{createdAt:'desc'},take:200,include:{run:{select:{city:true,state:true,status:true}}}})}
   async jobAction(id:string,action:string){const job=await prisma.jobRecord.findUnique({where:{id}});if(!job)throw new NotFoundException();if(action==='retry'&&job.runId){await prisma.jobRecord.update({where:{id},data:{state:'RECOVERING',errorMessage:null}});await enqueueRun(job.runId);return{ok:true}}if(action==='retry'&&job.queue==='website-analysis'){const analysisId=String((job.payload as any)?.analysisId??'');const analysis=await prisma.websiteAnalysis.findUnique({where:{id:analysisId}});if(!analysis)throw new NotFoundException('Análise não encontrada');await prisma.$transaction([prisma.websiteAnalysis.update({where:{id:analysis.id},data:{status:'RECOVERING',errorMessage:null}}),prisma.jobRecord.update({where:{id},data:{state:'RECOVERING',errorMessage:null}})]);await enqueueWebsiteAnalysis(analysis.id);return{ok:true}}if(action==='cancel'){if(job.queue==='website-analysis'){const analysisId=String((job.payload as any)?.analysisId??'');if(analysisId)await prisma.websiteAnalysis.updateMany({where:{id:analysisId},data:{status:'CANCELLED'}});const queue=websiteAnalysisQueue();try{await (await queue.getJob(`website-analysis-${analysisId}`))?.remove()}catch{}finally{await queue.close()}}return prisma.jobRecord.update({where:{id},data:{state:'CANCELLED'}})}throw new BadRequestException('Ação inválida')}
   campaigns(){return prisma.campaign.findMany({orderBy:{createdAt:'desc'},include:{_count:{select:{messages:true}}}})}
+  async campaignMessages(id:string){if(!await prisma.campaign.findUnique({where:{id},select:{id:true}}))throw new NotFoundException('Campanha não encontrada');return prisma.campaignMessage.findMany({where:{campaignId:id},orderBy:{createdAt:'desc'},include:{business:{select:{name:true}}}})}
   createCampaign(body:any){return prisma.campaign.create({data:{name:body.name,messageTemplate:body.messageTemplate,filters:body.filters??{},scheduledAt:body.scheduledAt?new Date(body.scheduledAt):null}})}
   async scheduleCampaign(id:string){const campaign=await prisma.campaign.findUnique({where:{id}});if(!campaign)throw new NotFoundException();const filters=campaign.filters as any;const businesses=await prisma.business.findMany({where:{phone:{not:null},leadScore:{gte:Number(filters.minScore??0)},city:filters.city||undefined,suppressions:{none:{}}}});await prisma.$transaction(businesses.map(b=>prisma.campaignMessage.upsert({where:{campaignId_businessId:{campaignId:id,businessId:b.id}},update:{},create:{campaignId:id,businessId:b.id,phone:b.normalizedPhone??b.phone!,idempotencyKey:`campaign:${id}:${b.id}`,scheduledAt:campaign.scheduledAt??new Date()}})));await prisma.campaign.update({where:{id},data:{status:'SCHEDULED'}});const q=campaignQueue();await q.add('send-campaign',{campaignId:id},{jobId:`campaign-${id}`,delay:Math.max(0,(campaign.scheduledAt?.getTime()??Date.now())-Date.now())});await q.close();return{selected:businesses.length}}
+  verifyWhatsAppWebhook(query:any){
+    const verifyToken=process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+    if(verifyToken&&query['hub.mode']==='subscribe'&&query['hub.verify_token']===verifyToken)return String(query['hub.challenge']??'');
+    throw new ForbiddenException('Token de verificação inválido');
+  }
+  async receiveWhatsAppWebhook(rawBody:Buffer|undefined,signature:string|undefined){
+    const buffer=rawBody??Buffer.alloc(0);
+    if(!verifyWhatsAppWebhookSignature(buffer,signature,process.env.WHATSAPP_APP_SECRET))throw new UnauthorizedException('Assinatura inválida');
+    const body=JSON.parse(buffer.toString('utf8')||'{}');
+    const changes=(body.entry??[]).flatMap((entry:any)=>entry.changes??[]);
+    for(const change of changes){
+      const value=change.value??{};
+      for(const status of value.statuses??[])await this.applyWhatsAppStatus(status);
+      for(const message of value.messages??[])await this.applyWhatsAppInboundMessage(message);
+    }
+    return{received:true};
+  }
+  private async applyWhatsAppStatus(status:any){
+    const map:Record<string,{status:string;field?:'deliveredAt'|'readAt'|'failedAt'}>={sent:{status:'SENT'},delivered:{status:'DELIVERED',field:'deliveredAt'},read:{status:'READ',field:'readAt'},failed:{status:'FAILED',field:'failedAt'}};
+    const mapped=map[status?.status];
+    if(!mapped||!status?.id)return;
+    const timestamp=Number(status.timestamp);
+    const at=Number.isFinite(timestamp)?new Date(timestamp*1000):new Date();
+    const data:any={status:mapped.status};
+    if(mapped.field)data[mapped.field]=at;
+    if(status.status==='failed')data.errorMessage=status.errors?.[0]?.title??'Falha reportada pelo WhatsApp';
+    await prisma.campaignMessage.updateMany({where:{providerMessageId:status.id},data});
+  }
+  private async applyWhatsAppInboundMessage(message:any){
+    if(!message?.from)return;
+    const text=message.text?.body??'';
+    const normalizedFrom=normalizePhone(`+${message.from}`);
+    if(!normalizedFrom)return;
+    const business=await prisma.business.findFirst({where:{normalizedPhone:normalizedFrom}});
+    if(!business)return;
+    const openMessage=await prisma.campaignMessage.findFirst({where:{businessId:business.id,status:{in:['SENT','DELIVERED','READ']}},orderBy:{sentAt:'desc'}});
+    if(openMessage)await prisma.campaignMessage.update({where:{id:openMessage.id},data:{status:'REPLIED',repliedAt:new Date()}});
+    if(detectOptOutIntent(text)){
+      if(business.leadStatus!=='DO_NOT_CONTACT')await this.leadStatus(business.id,{status:'DO_NOT_CONTACT',note:`Opt-out automático via WhatsApp: "${text.slice(0,200)}"`});
+      return;
+    }
+    const beforeReplied=new Set(['NEW','QUALIFIED','CONTACT_PENDING','CONTACTED']);
+    if(beforeReplied.has(business.leadStatus))await this.leadStatus(business.id,{status:'REPLIED',note:text?`Respondeu no WhatsApp: "${text.slice(0,200)}"`:'Respondeu no WhatsApp'});
+  }
   async settings(){const [row,configRow]=await Promise.all([prisma.systemSetting.findUnique({where:{key:'automation'}}),prisma.systemSetting.findUnique({where:{key:'autopilotConfig'}})]);return{dryRun:process.env.DRY_RUN!=='false',autoSendCampaigns:process.env.AUTO_SEND_CAMPAIGNS==='true',automation:row?.value??{paused:false,autopilot:false},autopilotConfig:parseAutopilotConfig(configRow?.value)}}
   async emergency(action:string){if(!['stop','resume','autopilot-on','autopilot-off'].includes(action))throw new BadRequestException();const current=await prisma.systemSetting.findUnique({where:{key:'automation'}});const value:any=current?.value??{};if(action==='stop')value.paused=true;if(action==='resume')value.paused=false;if(action==='autopilot-on')value.autopilot=true;if(action==='autopilot-off')value.autopilot=false;await prisma.systemSetting.upsert({where:{key:'automation'},update:{value},create:{key:'automation',value}});const queues=[prospectingQueue(),websiteAnalysisQueue(),campaignQueue()];for(const q of queues){action==='stop'?await q.pause():action==='resume'?await q.resume():null;await q.close()}return value}
   listExports(){return prisma.exportRecord.findMany({orderBy:{createdAt:'desc'},take:100})}

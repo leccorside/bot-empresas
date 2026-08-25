@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, HttpCode, Param, Patch, Post, Query, Req, Res } from '@nestjs/common';
 import { ApiService } from './service';
 
 @Controller()
@@ -34,6 +34,9 @@ export class ApiController {
   @Get('campaigns') campaigns(){return this.service.campaigns()}
   @Post('campaigns') createCampaign(@Body() body:any){return this.service.createCampaign(body)}
   @Post('campaigns/:id/schedule') scheduleCampaign(@Param('id') id:string){return this.service.scheduleCampaign(id)}
+  @Get('campaigns/:id/messages') campaignMessages(@Param('id') id:string){return this.service.campaignMessages(id)}
+  @Get('webhooks/whatsapp') verifyWhatsAppWebhook(@Query() query:any,@Res({passthrough:true}) res:any){res.type('text/plain');return this.service.verifyWhatsAppWebhook(query)}
+  @Post('webhooks/whatsapp') @HttpCode(200) receiveWhatsAppWebhook(@Req() req:any,@Headers('x-hub-signature-256') signature:string){return this.service.receiveWhatsAppWebhook(req.rawBody,signature)}
   @Get('settings') settings(){return this.service.settings()}
   @Post('settings/emergency/:action') emergency(@Param('action') action:string){return this.service.emergency(action)}
   @Get('exports') exports(){return this.service.listExports()}

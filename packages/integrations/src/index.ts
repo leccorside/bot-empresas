@@ -1,3 +1,5 @@
+import { createHmac, timingSafeEqual } from 'crypto';
+import { normalizeText } from '@prospector/shared';
 import type { GeographicBounds } from '@prospector/shared';
 export * from './website.ts';
 export * from './pagespeed.ts';
@@ -63,4 +65,20 @@ export class WhatsAppCloudProvider implements MessagingProvider {
     if(!response.ok) throw new Error(`WhatsApp respondeu ${response.status}`);
     const data=await response.json() as any; return {providerMessageId:data.messages?.[0]?.id};
   }
+}
+
+export function verifyWhatsAppWebhookSignature(rawBody: Buffer, signatureHeader: string | undefined, appSecret: string | undefined) {
+  if (!appSecret) return true;
+  if (!signatureHeader?.startsWith('sha256=')) return false;
+  const expected = `sha256=${createHmac('sha256', appSecret).update(rawBody).digest('hex')}`;
+  const provided = Buffer.from(signatureHeader);
+  const expectedBuffer = Buffer.from(expected);
+  if (provided.length !== expectedBuffer.length) return false;
+  return timingSafeEqual(provided, expectedBuffer);
+}
+
+const optOutKeywords = ['parar', 'pare', 'para de mandar', 'sair', 'saia', 'remover', 'remova', 'me remova', 'cancelar', 'cancele', 'nao quero', 'sem interesse', 'nao tenho interesse', 'descadastrar', 'descadastre', 'stop', 'unsubscribe'];
+export function detectOptOutIntent(text: string) {
+  const normalized = normalizeText(text ?? '');
+  return optOutKeywords.some(keyword => normalized.includes(keyword));
 }

@@ -38,6 +38,23 @@ function LeadCard({ business, onChanged }: { business: any; onChanged: () => voi
   </div>;
 }
 
+function CampaignRow({ campaign, onChanged }: { campaign: any; onChanged: () => void }) {
+  const [messages, setMessages] = useState<any[] | null>(null);
+
+  async function toggleMessages() {
+    if (messages) { setMessages(null); return; }
+    setMessages(await api(`campaigns/${campaign.id}/messages`));
+  }
+
+  return <>
+    <tr>
+      <td>{campaign.name}</td><td><Status value={campaign.status} /></td><td>{campaign._count.messages}</td><td>{new Date(campaign.createdAt).toLocaleString('pt-BR')}</td>
+      <td><div className="rowActions">{campaign.status === 'DRAFT' && <button className="btn sm" onClick={() => api(`campaigns/${campaign.id}/schedule`, { method: 'POST' }).then(onChanged)}>Preparar/envio</button>}{campaign._count.messages > 0 && <button type="button" className="btn secondary sm" onClick={toggleMessages}>{messages ? 'Ocultar mensagens' : 'Ver mensagens'}</button>}</div></td>
+    </tr>
+    {messages && <tr><td colSpan={5}>{messages.length ? <div className="tableWrap"><table className="table compactTable"><thead><tr><th>Empresa</th><th>Telefone</th><th>Status</th><th>Enviada</th><th>Entregue</th><th>Lida</th><th>Respondida</th></tr></thead><tbody>{messages.map(message => <tr key={message.id}><td>{message.business?.name ?? '—'}</td><td>{message.phone}</td><td><Status value={message.status} /></td><td>{message.sentAt ? new Date(message.sentAt).toLocaleString('pt-BR') : '—'}</td><td>{message.deliveredAt ? new Date(message.deliveredAt).toLocaleString('pt-BR') : '—'}</td><td>{message.readAt ? new Date(message.readAt).toLocaleString('pt-BR') : '—'}</td><td>{message.repliedAt ? new Date(message.repliedAt).toLocaleString('pt-BR') : '—'}</td></tr>)}</tbody></table></div> : <Empty>Nenhuma mensagem gerada ainda.</Empty>}</td></tr>}
+  </>;
+}
+
 function PipelineColumn({ status, data, onChanged }: { status: string; data?: { items: any[]; total: number }; onChanged: () => void }) {
   return <div className={`pipelineColumn ${closedStatuses.includes(status) ? 'closed' : ''}`}>
     <div className="pipelineHeader"><span>{leadStatusLabels[status]}</span><span>{data?.total ?? 0}</span></div>
@@ -79,7 +96,7 @@ export default function CRM() {
         <button className="btn" style={{ width: 180 }}>Criar campanha</button>
       </form>
     </section>
-    <section className="card">{campaigns.length ? <table className="table"><thead><tr><th>Campanha</th><th>Status</th><th>Mensagens</th><th>Criada</th><th>Ação</th></tr></thead><tbody>{campaigns.map(x => <tr key={x.id}><td>{x.name}</td><td><Status value={x.status} /></td><td>{x._count.messages}</td><td>{new Date(x.createdAt).toLocaleString('pt-BR')}</td><td>{x.status === 'DRAFT' && <button className="btn sm" onClick={() => api(`campaigns/${x.id}/schedule`, { method: 'POST' }).then(loadCampaigns)}>Preparar/envio</button>}</td></tr>)}</tbody></table> : <Empty>Nenhuma campanha criada.</Empty>}</section>
+    <section className="card">{campaigns.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Campanha</th><th>Status</th><th>Mensagens</th><th>Criada</th><th>Ação</th></tr></thead><tbody>{campaigns.map(x => <CampaignRow key={x.id} campaign={x} onChanged={loadCampaigns} />)}</tbody></table></div> : <Empty>Nenhuma campanha criada.</Empty>}</section>
     {msg && <div className="toast">{msg}</div>}
   </Shell>;
 }

@@ -11,7 +11,7 @@ import { AppModule } from './module';
 const log = logger('api');
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { cors: { origin: true, credentials: true } });
+  const app = await NestFactory.create(AppModule, { cors: { origin: true, credentials: true }, rawBody: true });
   app.use((request: any, response: any, next: () => void) => {
     const requestId = String(request.headers['x-request-id'] ?? randomUUID());
     const startedAt = Date.now();
