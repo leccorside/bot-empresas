@@ -1,0 +1,10 @@
+node_modules/
+.next/
+dist/
+.env
+storage/exports/*
+storage/logs/*
+storage/backups/*
+!storage/**/.gitkeep
+coverage/
+*.log

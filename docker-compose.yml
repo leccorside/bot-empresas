@@ -1,0 +1,105 @@
+name: local-prospector
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: prospector-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${TZ}
+    volumes: [postgres_data:/var/lib/postgresql/data, backups_data:/storage/backups, ./scripts:/scripts:ro]
+    networks: [prospector]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"], interval: 5s, timeout: 5s, retries: 20}
+  redis:
+    image: redis:7.4-alpine
+    container_name: prospector-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory-policy noeviction
+    volumes: [redis_data:/data]
+    networks: [prospector]
+    healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 5s, timeout: 3s, retries: 20}
+  bootstrap:
+    image: local-prospector-app:latest
+    build: {context: ., target: runtime}
+    container_name: prospector-bootstrap
+    env_file: .env
+    command: sh -c "npx prisma migrate deploy --schema packages/database/prisma/schema.prisma && npm run db:seed"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    networks: [prospector]
+    restart: "no"
+  api:
+    image: local-prospector-app:latest
+    container_name: prospector-api
+    restart: unless-stopped
+    env_file: .env
+    command: node apps/api/dist/apps/api/src/main.js
+    ports: ["3001:3001"]
+    volumes: [exports_data:/storage/exports, logs_data:/storage/logs]
+    networks: [prospector]
+    depends_on:
+      bootstrap: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck: {test: ["CMD", "curl", "-fsS", "http://localhost:3001/health"], interval: 10s, timeout: 5s, retries: 12, start_period: 15s}
+    stop_grace_period: 30s
+  web:
+    image: local-prospector-app:latest
+    container_name: prospector-web
+    restart: unless-stopped
+    env_file: .env
+    command: npm run start -w @prospector/web
+    ports: ["3000:3000"]
+    networks: [prospector]
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck: {test: ["CMD", "curl", "-fsS", "http://localhost:3000"], interval: 10s, timeout: 5s, retries: 12, start_period: 15s}
+    stop_grace_period: 20s
+  worker:
+    image: local-prospector-app:latest
+    container_name: prospector-worker
+    restart: unless-stopped
+    env_file: .env
+    command: node apps/worker/dist/apps/worker/src/main.js
+    volumes: [exports_data:/storage/exports, logs_data:/storage/logs]
+    networks: [prospector]
+    depends_on:
+      bootstrap: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    healthcheck: {test: ["CMD", "node", "-e", "process.kill(1,0)"], interval: 15s, timeout: 5s, retries: 5}
+    stop_grace_period: 60s
+  scheduler:
+    image: local-prospector-app:latest
+    container_name: prospector-scheduler
+    restart: unless-stopped
+    env_file: .env
+    command: node apps/scheduler/dist/apps/scheduler/src/main.js
+    volumes: [logs_data:/storage/logs, backups_data:/storage/backups]
+    networks: [prospector]
+    depends_on:
+      bootstrap: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    healthcheck: {test: ["CMD", "node", "-e", "process.kill(1,0)"], interval: 15s, timeout: 5s, retries: 5}
+    stop_grace_period: 30s
+  backup:
+    image: postgres:17-alpine
+    container_name: prospector-backup
+    restart: unless-stopped
+    env_file: .env
+    command: sh /scripts/backup-loop.sh
+    volumes: [backups_data:/storage/backups, ./scripts:/scripts:ro]
+    networks: [prospector]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck: {test: ["CMD-SHELL", "kill -0 1"], interval: 30s, timeout: 5s, retries: 3}
+networks:
+  prospector: {driver: bridge}
+volumes:
+  postgres_data:
+  redis_data:
+  exports_data:
+  logs_data:
+  backups_data:

@@ -1,0 +1,1 @@
+{"extends":"./tsconfig.json","compilerOptions":{"noEmit":true,"jsx":"preserve"},"include":["apps/**/*.ts","apps/**/*.tsx","packages/**/*.ts","tests/**/*.ts"],"exclude":["node_modules",".next","dist"]}

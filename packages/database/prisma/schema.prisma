@@ -1,0 +1,382 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RunStatus {
+  PENDING
+  QUEUED
+  RUNNING
+  PAUSED
+  RECOVERING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum CellStatus {
+  PENDING
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum CheckpointStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum SiteStatus {
+  NO_WEBSITE
+  POOR
+  AVERAGE
+  GOOD
+  UNKNOWN
+}
+
+enum WhatsappStatus {
+  UNKNOWN
+  AVAILABLE
+  NOT_AVAILABLE
+  INVALID
+}
+
+enum PhoneType {
+  MOBILE
+  LANDLINE
+  UNKNOWN
+}
+
+enum ScoreClass {
+  LOW
+  MEDIUM
+  HIGH
+  VERY_HIGH
+}
+
+enum LeadStatus {
+  NEW
+  QUALIFIED
+  CONTACT_PENDING
+  CONTACTED
+  REPLIED
+  INTERESTED
+  MEETING
+  PROPOSAL
+  CUSTOMER
+  NOT_INTERESTED
+  DO_NOT_CONTACT
+}
+
+enum ScheduleType {
+  ONCE
+  DAILY
+  WEEKLY
+  MONTHLY
+  SPECIFIC_DAYS
+  CRON
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum MessageStatus {
+  PENDING
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  REPLIED
+  FAILED
+  BLOCKED
+}
+
+enum JobState {
+  WAITING
+  ACTIVE
+  COMPLETED
+  FAILED
+  DELAYED
+  RECOVERING
+  CANCELLED
+}
+
+model User {
+  id String @id @default(cuid())
+  email String @unique
+  passwordHash String
+  name String @default("Administrador")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SystemSetting {
+  key String @id
+  value Json
+  updatedAt DateTime @updatedAt
+}
+
+model Schedule {
+  id String @id @default(cuid())
+  name String
+  enabled Boolean @default(true)
+  country String @default("Brasil")
+  state String
+  city String
+  category String @default("Todos")
+  scheduleType ScheduleType
+  cronExpression String?
+  timezone String @default("America/Sao_Paulo")
+  lastRunAt DateTime?
+  nextRunAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  runs ProspectingRun[]
+  @@index([enabled, nextRunAt])
+}
+
+model ProspectingRun {
+  id String @id @default(cuid())
+  scheduleId String?
+  schedule Schedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  country String
+  state String
+  city String
+  category String
+  status RunStatus @default(PENDING)
+  idempotencyKey String @unique
+  startedAt DateTime?
+  heartbeatAt DateTime?
+  finishedAt DateTime?
+  businessesFound Int @default(0)
+  businessesNew Int @default(0)
+  businessesUpdated Int @default(0)
+  duplicatesFound Int @default(0)
+  websitesFound Int @default(0)
+  withoutWebsite Int @default(0)
+  phonesFound Int @default(0)
+  whatsappFound Int @default(0)
+  currentStage String @default("PENDING")
+  errorMessage String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  checkpoints ProcessingCheckpoint[]
+  cells SearchCell[]
+  discoveries DiscoveryEvent[]
+  jobs JobRecord[]
+  @@index([status, heartbeatAt])
+  @@index([createdAt])
+}
+
+model SearchCell {
+  id String @id @default(cuid())
+  runId String
+  run ProspectingRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  latitude Float
+  longitude Float
+  radius Int @default(5000)
+  category String
+  status CellStatus @default(PENDING)
+  currentPage Int @default(0)
+  nextPageToken String?
+  resultsFound Int @default(0)
+  startedAt DateTime?
+  completedAt DateTime?
+  @@unique([runId, latitude, longitude, category])
+  @@index([runId, status])
+}
+
+model ProcessingCheckpoint {
+  id String @id @default(cuid())
+  runId String
+  run ProspectingRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stage String
+  entityType String
+  entityId String
+  cursor String?
+  page Int @default(0)
+  offset Int @default(0)
+  processedItems Int @default(0)
+  totalItems Int?
+  status CheckpointStatus @default(PENDING)
+  metadata Json @default("{}")
+  startedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  completedAt DateTime?
+  @@unique([runId, stage, entityType, entityId])
+  @@index([runId, status])
+}
+
+model Business {
+  id String @id @default(cuid())
+  provider String
+  providerId String
+  name String
+  normalizedName String
+  category String
+  address String?
+  normalizedAddress String?
+  district String?
+  city String
+  state String
+  postalCode String?
+  country String @default("Brasil")
+  latitude Float?
+  longitude Float?
+  website String?
+  siteStatus SiteStatus @default(UNKNOWN)
+  siteHttpStatus Int?
+  siteResponseMs Int?
+  hasHttps Boolean?
+  pageTitle String?
+  phone String?
+  normalizedPhone String?
+  rating Float?
+  reviewsCount Int?
+  mapsUrl String?
+  leadScore Int @default(0)
+  scoreClass ScoreClass @default(LOW)
+  leadStatus LeadStatus @default(NEW)
+  firstSeenAt DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  websiteCheckedAt DateTime?
+  phoneCheckedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  phones BusinessPhone[]
+  snapshots BusinessSnapshot[]
+  discoveries DiscoveryEvent[]
+  leadEvents LeadEvent[]
+  messages CampaignMessage[]
+  suppressions ContactSuppression[]
+  @@unique([provider, providerId])
+  @@index([city, state, category])
+  @@index([leadScore, leadStatus])
+  @@index([normalizedName, normalizedPhone, normalizedAddress])
+}
+
+model BusinessPhone {
+  id String @id @default(cuid())
+  businessId String
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  phone String
+  normalizedPhone String @unique
+  type PhoneType @default(UNKNOWN)
+  whatsappStatus WhatsappStatus @default(UNKNOWN)
+  verifiedAt DateTime?
+  createdAt DateTime @default(now())
+}
+
+model BusinessSnapshot {
+  id String @id @default(cuid())
+  businessId String
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  rating Float?
+  reviewsCount Int?
+  website String?
+  phone String?
+  capturedAt DateTime @default(now())
+  @@index([businessId, capturedAt])
+}
+
+model DiscoveryEvent {
+  id String @id @default(cuid())
+  runId String
+  run ProspectingRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  businessId String
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  cellId String?
+  wasNew Boolean
+  createdAt DateTime @default(now())
+  @@unique([runId, businessId])
+}
+
+model LeadEvent {
+  id String @id @default(cuid())
+  businessId String
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  fromStatus LeadStatus?
+  toStatus LeadStatus
+  note String?
+  createdAt DateTime @default(now())
+  @@index([businessId, createdAt])
+}
+
+model Campaign {
+  id String @id @default(cuid())
+  name String
+  status CampaignStatus @default(DRAFT)
+  filters Json @default("{}")
+  messageTemplate String
+  scheduledAt DateTime?
+  startedAt DateTime?
+  finishedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  messages CampaignMessage[]
+}
+
+model CampaignMessage {
+  id String @id @default(cuid())
+  campaignId String
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  businessId String
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  phone String
+  status MessageStatus @default(PENDING)
+  idempotencyKey String @unique
+  providerMessageId String?
+  scheduledAt DateTime?
+  sentAt DateTime?
+  deliveredAt DateTime?
+  readAt DateTime?
+  repliedAt DateTime?
+  failedAt DateTime?
+  errorMessage String?
+  createdAt DateTime @default(now())
+  @@unique([campaignId, businessId])
+  @@index([status, scheduledAt])
+}
+
+model ContactSuppression {
+  id String @id @default(cuid())
+  businessId String?
+  business Business? @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  normalizedPhone String @unique
+  reason String
+  createdAt DateTime @default(now())
+}
+
+model JobRecord {
+  id String @id @default(cuid())
+  queue String
+  name String
+  bullJobId String? @unique
+  idempotencyKey String @unique
+  state JobState @default(WAITING)
+  runId String?
+  run ProspectingRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+  payload Json
+  attempts Int @default(0)
+  maxAttempts Int @default(5)
+  errorMessage String?
+  availableAt DateTime @default(now())
+  startedAt DateTime?
+  completedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([state, availableAt])
+}

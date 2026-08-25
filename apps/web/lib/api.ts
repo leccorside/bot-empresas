@@ -1,0 +1,4 @@
+'use client';
+const base=process.env.NEXT_PUBLIC_API_URL??'http://localhost:3001';
+export async function api(path:string,options:RequestInit={}){const token=typeof window!=='undefined'?localStorage.getItem('token'):null;const response=await fetch(`${base}/${path}`,{...options,headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{ }),...options.headers},cache:'no-store'});if(response.status===401&&typeof window!=='undefined'){localStorage.removeItem('token');if(!location.pathname.startsWith('/login'))location.href='/login'}if(!response.ok)throw new Error((await response.json().catch(()=>({}))).message??`Erro ${response.status}`);return response.headers.get('content-type')?.includes('json')?response.json():response.text()}
+export const downloadUrl=(path:string)=>`${base}/${path}`;
