@@ -1,7 +1,7 @@
 import { Worker, Job } from 'bullmq';
-import { createWebsiteAnalysisIntent, persistDiscoveryProgress, prisma, recordServiceHeartbeat } from '@prospector/database';
+import { consumeProviderBudget, createWebsiteAnalysisIntent, persistDiscoveryProgress, prisma, recordServiceHeartbeat } from '@prospector/database';
 import type { ProspectingRun, SearchCell } from '@prospector/database';
-import { campaignQueue, enqueueWebsiteAnalysis, queueOptions, QUEUES } from '@prospector/queues';
+import { campaignQueue, enqueueDeadLetter, enqueueWebsiteAnalysis, queueOptions, QUEUES } from '@prospector/queues';
 import { AiInsightProvider, analyzeWebsite, GooglePlacesProvider, PageSpeedProvider, websiteAnalysisVersion, WhatsAppCloudProvider } from '@prospector/integrations';
 import { businessWhere, calculateLeadScore, campaignDispatchDecision, generateGeographicGrid, logger, normalizePhone, normalizeText, parseCampaignDispatchPolicy, phoneType, resolveTemplateVariable } from '@prospector/shared';
 import type { GeographicBounds } from '@prospector/shared';
@@ -11,6 +11,12 @@ const whatsappLog=logger('whatsapp');
 const provider=new GooglePlacesProvider();
 const pageSpeedProvider=new PageSpeedProvider();
 class RunCancelledError extends Error {}
+
+async function consumeGooglePlacesRequest(operation:string){
+  if(!process.env.GOOGLE_MAPS_API_KEY)return;
+  const budget=await consumeProviderBudget('GOOGLE_PLACES',Number(process.env.GOOGLE_PLACES_DAILY_REQUEST_LIMIT??1000));
+  if(budget.status!=='OK')log.warn({operation,...budget},'google places budget alert');
+}
 
 async function automationPaused(){const row=await prisma.systemSetting.findUnique({where:{key:'automation'}});return Boolean((row?.value as any)?.paused)}
 async function scheduleWebsiteAnalysis(businessId:string,url:string,force=false){
@@ -37,7 +43,8 @@ function cellBounds(cell: SearchCell): GeographicBounds | undefined {
 async function ensureGeographicGrid(run: ProspectingRun, jobLog: ReturnType<typeof logger>) {
   const existingCells=await prisma.searchCell.count({where:{runId:run.id}});
   if(existingCells){if(run.gridCellsTotal!==existingCells)await prisma.prospectingRun.update({where:{id:run.id},data:{gridCellsTotal:existingCells}});return existingCells}
-  const bounds=persistedBounds(run)??await provider.resolveBoundary({country:run.country,state:run.state,city:run.city});
+  let bounds=persistedBounds(run);
+  if(!bounds){await consumeGooglePlacesRequest('RESOLVE_BOUNDARY');bounds=await provider.resolveBoundary({country:run.country,state:run.state,city:run.city})}
   const requestedCellSize=Number(process.env.GRID_CELL_SIZE_METERS??5000);
   const cells=generateGeographicGrid(bounds,requestedCellSize,Number(process.env.GRID_MAX_CELLS??500));
   await prisma.$transaction(async tx=>{
@@ -61,6 +68,7 @@ async function processCell(run: ProspectingRun, cell: SearchCell, jobLog: Return
       const currentRun=await prisma.prospectingRun.findUnique({where:{id:run.id},select:{status:true}});
       if(currentRun?.status==='CANCELLED')throw new RunCancelledError('Execução cancelada');
       if(await automationPaused())throw new Error('Automações pausadas pelo botão de emergência');
+      await consumeGooglePlacesRequest('DISCOVER');
       const found=await provider.discover({country:run.country,state:run.state,city:run.city,category:run.category,pageToken:token,bounds:cellBounds(cell)});
       for(const item of found.results){
         const normalizedPhone=normalizePhone(item.phone);const normalizedName=normalizeText(item.name);const normalizedAddress=normalizeText(item.address??'');
@@ -249,7 +257,16 @@ const prospectWorker=new Worker(QUEUES.prospecting,processRun,{...queueOptions()
 const websiteWorker=new Worker(QUEUES.websiteAnalysis,processWebsiteAnalysis,{...queueOptions(),concurrency:Number(process.env.WEBSITE_ANALYZER_CONCURRENCY??3),limiter:{max:Number(process.env.WEBSITE_ANALYZER_REQUESTS_PER_SECOND??3),duration:1000}});
 const campaignWorker=new Worker(QUEUES.campaign,processCampaign,{...queueOptions(),concurrency:1});
 const insightBatchWorker=new Worker(QUEUES.insightBatch,processInsightBatch,{...queueOptions(),concurrency:1});
-for(const worker of [prospectWorker,websiteWorker,campaignWorker,insightBatchWorker]){worker.on('active',j=>prisma.jobRecord.updateMany({where:{bullJobId:j.id},data:{state:'ACTIVE',startedAt:new Date(),attempts:{increment:1}}}).catch(()=>{}));worker.on('failed',(j,e)=>log.error({jobId:j?.id,runId:(j?.data as any)?.runId,analysisId:(j?.data as any)?.analysisId,campaignId:(j?.data as any)?.campaignId,batchId:(j?.data as any)?.batchId,error:e.message},'job failed'))}
+for(const worker of [prospectWorker,websiteWorker,campaignWorker,insightBatchWorker]){
+  worker.on('active',j=>prisma.jobRecord.updateMany({where:{bullJobId:j.id},data:{state:'ACTIVE',startedAt:new Date(),attempts:{increment:1}}}).catch(()=>{}));
+  worker.on('failed',(j,e)=>{
+    const attempts=j?.attemptsMade??0,maxAttempts=Number(j?.opts.attempts??5),exhausted=Boolean(j&&attempts>=maxAttempts);
+    log.error({queue:worker.name,jobId:j?.id,runId:(j?.data as any)?.runId,analysisId:(j?.data as any)?.analysisId,campaignId:(j?.data as any)?.campaignId,batchId:(j?.data as any)?.batchId,attempts,maxAttempts,exhausted,error:e.message},'job failed');
+    if(!j)return;
+    prisma.jobRecord.updateMany({where:{bullJobId:j.id},data:{state:exhausted?'FAILED':'WAITING',errorMessage:e.message}}).catch(()=>{});
+    if(exhausted)enqueueDeadLetter({sourceQueue:worker.name,sourceJobId:String(j.id),name:j.name,payload:j.data,attempts,errorMessage:e.message}).catch(error=>log.error({queue:worker.name,jobId:j.id,error:error.message},'dead-letter enqueue failed'));
+  });
+}
 const heartbeat=()=>Promise.all([recordServiceHeartbeat('worker'),recordServiceHeartbeat('website-analyzer')]).catch(error=>log.error({error:error.message},'worker heartbeat failed'));
 const serviceHeartbeatTimer=setInterval(heartbeat,15000);
 heartbeat();

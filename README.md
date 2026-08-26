@@ -39,6 +39,8 @@ A URL pública fica disponível em `curl http://localhost:4040/api/tunnels` (ou 
 
 Cada prospecção resolve o viewport da cidade pela Places API (New), divide-o em células geográficas persistentes e restringe cada busca ao retângulo da célula. O progresso pode ser acompanhado na coluna **Células** e em `GET /runs/:id/cells`. Ajuste `GRID_CELL_SIZE_METERS`, `GRID_MAX_CELLS` e `GOOGLE_PLACES_MAX_PAGES_PER_CELL` no `.env` para controlar cobertura, custo e volume. A resolução do viewport e as buscas usam somente a Places API (New); não é necessário habilitar a Geocoding API.
 
+A busca manual aceita várias categorias no mesmo envio e cria uma execução idempotente para cada uma. O dashboard resume cobertura, células vazias/saturadas e resultados médios por célula. Toda chamada real à Places API consome o contador diário persistente; `GOOGLE_PLACES_DAILY_REQUEST_LIMIT` bloqueia novas chamadas ao atingir o teto e o painel alerta a partir de 80%.
+
 Empresas com website são enviadas para a fila persistente **Website Analyzer**. O worker verifica status HTTP, HTTPS/SSL, tempo de resposta, viewport, title, description, WordPress e tecnologias, atualiza o Lead Score e mantém o resultado em `WebsiteAnalysis`. A análise também pode ser refeita na tela **Empresas** ou por `POST /businesses/:id/website-analysis`; o histórico fica em `GET /businesses/:id/website-analyses`. Destinos locais, redes privadas, portas não web e redirects inseguros são bloqueados.
 
 Sem `PAGESPEED_API_KEY`, o score de performance usa um resultado de demonstração determinístico; com a chave, o worker consulta o PageSpeed Insights (`PAGESPEED_STRATEGY`, `PAGESPEED_TIMEOUT_MS`) e grava `performanceScore` em `WebsiteAnalysis` e `Business`. Um score de performance abaixo de 50 soma pontos ao Lead Score. Falhas na consulta ao PageSpeed não derrubam a análise do site: o restante do resultado é persistido normalmente.
@@ -75,6 +77,10 @@ Campanhas podem usar filtros completos ou uma seleção explícita de leads. O w
 ## Operação e resiliência
 
 Use `docker compose down` para parar sem apagar dados. Apenas `docker compose down -v` remove volumes. O scheduler reconcilia o estado a cada 30 segundos; apagar o volume Redis não apaga empresas, runs, checkpoints, schedules ou campanhas.
+
+Falhas que esgotam todas as tentativas entram na fila `dead-letter` e continuam registradas no PostgreSQL. A tela **Jobs** permite filtrar a DLQ, reprocessar o fluxo original ou arquivar a falha. Após perda do Redis, o scheduler também reconstrói a DLQ e elimina jobs órfãos cujas entidades já não existem.
+
+O backup diário só é marcado como saudável depois de validar o gzip e restaurá-lo integralmente em um banco temporário. O container `backup` fica `unhealthy` se o último arquivo verificado ultrapassar `BACKUP_MAX_AGE_HOURS`. Para testar recuperação real do Redis quando as filas estiverem vazias, execute `./scripts/test-disaster-recovery.ps1 -Execute`; o script aborta antes da perda se encontrar entidades executáveis, confere unicidade e restaura os serviços ao final.
 
 Comandos auxiliares estão no `Makefile`. Logs estruturados em JSON vão simultaneamente para stdout (`docker compose logs -f`) e para o volume persistente `logs_data`, em `/storage/logs/`: `api.log`, `worker.log`, `scheduler.log`, `recovery.log`, `whatsapp.log` e `errors.log`. A rotação usa 10 MB e cinco históricos por padrão; ajuste `LOG_MAX_BYTES` e `LOG_MAX_FILES` no `.env` quando necessário. Exports ficam no volume `exports_data`; backups usam `scripts/backup.sh` e o volume `backups_data`.
 

@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ensureProspectingJob, ensureWebsiteAnalysisJob } from '../packages/queues/src';
+import { deadLetterJobId, ensureProspectingJob, ensureWebsiteAnalysisJob } from '../packages/queues/src';
 
 describe('retomada de jobs de prospecção', () => {
+  it('gera ID determinístico e seguro para a dead letter queue', () => {
+    expect(deadLetterJobId('website-analysis', 'job:123')).toBe('dlq-website-analysis-job-123');
+  });
   it('recoloca um job falho na fila sem criar duplicata', async () => {
     const job = { getState: vi.fn().mockResolvedValue('failed'), retry: vi.fn(), remove: vi.fn() };
     const queue = { getJob: vi.fn().mockResolvedValue(job), add: vi.fn() };

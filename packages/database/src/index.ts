@@ -12,6 +12,39 @@ export async function recordServiceHeartbeat(service: string, at = new Date()) {
   });
 }
 
+export function providerBudgetDay(at = new Date(), timeZone = process.env.TZ ?? 'America/Sao_Paulo') {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(at);
+  const value = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
+export type ProviderBudget = { provider: string; day: string; used: number; limit: number; remaining: number; percent: number; status: 'OK' | 'WARNING' | 'EXHAUSTED' };
+
+export async function consumeProviderBudget(provider: string, limit: number, at = new Date()): Promise<ProviderBudget> {
+  const normalizedLimit = Math.max(1, Math.floor(limit));
+  const day = providerBudgetDay(at);
+  const key = `budget:${provider.toLowerCase()}:${day}`;
+  return prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
+    const current = await tx.systemSetting.findUnique({ where: { key } });
+    const used = Number((current?.value as any)?.used ?? 0);
+    if (used >= normalizedLimit) throw new Error(`Orçamento diário de ${provider} esgotado (${used}/${normalizedLimit})`);
+    const next = used + 1;
+    await tx.systemSetting.upsert({ where: { key }, update: { value: { provider, day, used: next, limit: normalizedLimit } }, create: { key, value: { provider, day, used: next, limit: normalizedLimit } } });
+    const percent = Math.round(next / normalizedLimit * 1000) / 10;
+    return { provider, day, used: next, limit: normalizedLimit, remaining: normalizedLimit - next, percent, status: next >= normalizedLimit ? 'EXHAUSTED' : percent >= 80 ? 'WARNING' : 'OK' };
+  });
+}
+
+export async function readProviderBudget(provider: string, limit: number, at = new Date()): Promise<ProviderBudget> {
+  const normalizedLimit = Math.max(1, Math.floor(limit));
+  const day = providerBudgetDay(at);
+  const row = await prisma.systemSetting.findUnique({ where: { key: `budget:${provider.toLowerCase()}:${day}` } });
+  const used = Number((row?.value as any)?.used ?? 0);
+  const percent = Math.round(used / normalizedLimit * 1000) / 10;
+  return { provider, day, used, limit: normalizedLimit, remaining: Math.max(0, normalizedLimit - used), percent, status: used >= normalizedLimit ? 'EXHAUSTED' : percent >= 80 ? 'WARNING' : 'OK' };
+}
+
 export type DiscoveryProgressInput = {
   runId: string;
   businessId: string;

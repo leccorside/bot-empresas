@@ -14,6 +14,24 @@ export const prospectingQueue = () => new Queue(QUEUES.prospecting, queueOptions
 export const websiteAnalysisQueue = () => new Queue(QUEUES.websiteAnalysis, queueOptions());
 export const campaignQueue = () => new Queue(QUEUES.campaign, queueOptions());
 export const insightBatchQueue = () => new Queue(QUEUES.insightBatch, queueOptions());
+export const deadLetterQueue = () => new Queue(QUEUES.deadLetter, { ...queueOptions(), defaultJobOptions: { attempts: 1, removeOnComplete: 500, removeOnFail: 5000 } });
+export const deadLetterJobId = (queue: string, jobId: string) => `dlq-${queue}-${jobId}`.replace(/[^a-zA-Z0-9_-]/g, '-');
+
+export async function enqueueDeadLetter(input: { sourceQueue: string; sourceJobId: string; name: string; payload: unknown; attempts: number; errorMessage: string }) {
+  const queue = deadLetterQueue();
+  const jobId = deadLetterJobId(input.sourceQueue, input.sourceJobId);
+  try {
+    const existing = await queue.getJob(jobId);
+    if (existing) return existing;
+    return await queue.add('dead-letter', input, { jobId, attempts: 1 });
+  } finally { await queue.close(); }
+}
+
+export async function removeDeadLetter(sourceQueue: string, sourceJobId: string) {
+  const queue = deadLetterQueue();
+  try { await (await queue.getJob(deadLetterJobId(sourceQueue, sourceJobId)))?.remove(); }
+  finally { await queue.close(); }
+}
 export async function ensureProspectingJob(queue: Pick<Queue, 'getJob' | 'add'>, runId: string) {
   const jobId = `prospecting-${runId}`;
   const existing = await queue.getJob(jobId);

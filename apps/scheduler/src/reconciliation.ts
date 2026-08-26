@@ -1,6 +1,6 @@
 import type { Queue } from 'bullmq';
 import { createWebsiteAnalysisIntent, prisma } from '@prospector/database';
-import { ensureInsightBatchJob, ensureWebsiteAnalysisJob } from '@prospector/queues';
+import { deadLetterJobId, ensureInsightBatchJob, ensureWebsiteAnalysisJob } from '@prospector/queues';
 import { websiteAnalysisVersion } from '@prospector/integrations';
 import { staleWebsiteCutoff } from './policy';
 
@@ -58,7 +58,13 @@ export async function rebuildCampaignQueue(queue: Queue, now = new Date(), stale
       rebuilt++;
     }
   }
-  return { durable: candidates.length, rebuilt };
+  let removed = 0;
+  for (const job of await queue.getJobs(['waiting', 'delayed', 'prioritized', 'paused', 'failed'])) {
+    const campaignId = job.data?.campaignId as string | undefined;
+    const campaign = campaignId ? await prisma.campaign.findUnique({ where: { id: campaignId }, select: { status: true } }) : null;
+    if (!campaign || ['COMPLETED', 'CANCELLED'].includes(campaign.status)) { await job.remove(); removed++; }
+  }
+  return { durable: candidates.length, rebuilt, removed };
 }
 
 export async function rebuildWebsiteAnalysisQueue(queue: Queue, now = new Date(), staleSeconds = 120) {
@@ -77,7 +83,13 @@ export async function rebuildWebsiteAnalysisQueue(queue: Queue, now = new Date()
       create: { queue: 'website-analysis', name: 'analyze-website', bullJobId: job.id, idempotencyKey: analysis.idempotencyKey, state: recovering ? 'RECOVERING' : 'WAITING', payload: { analysisId: analysis.id, businessId: analysis.businessId, version: analysis.version } },
     });
   }
-  return { durable: analyses.length, rebuilt };
+  let removed = 0;
+  for (const job of await queue.getJobs(['waiting', 'delayed', 'prioritized', 'paused', 'failed'])) {
+    const analysisId = job.data?.analysisId as string | undefined;
+    const analysis = analysisId ? await prisma.websiteAnalysis.findUnique({ where: { id: analysisId }, select: { status: true } }) : null;
+    if (!analysis || ['COMPLETED', 'CANCELLED'].includes(analysis.status)) { await job.remove(); removed++; }
+  }
+  return { durable: analyses.length, rebuilt, removed };
 }
 
 export async function rebuildInsightBatchQueue(queue: Queue, now = new Date(), staleSeconds = 120) {
@@ -96,7 +108,50 @@ export async function rebuildInsightBatchQueue(queue: Queue, now = new Date(), s
       create: { queue: 'insight-batch', name: 'generate-insight-batch', bullJobId: job.id, idempotencyKey: `insight-batch:${batch.id}`, state: recovering ? 'RECOVERING' : 'WAITING', payload: { batchId: batch.id } },
     });
   }
-  return { durable: batches.length, rebuilt };
+  let removed = 0;
+  for (const job of await queue.getJobs(['waiting', 'delayed', 'prioritized', 'paused', 'failed'])) {
+    const batchId = job.data?.batchId as string | undefined;
+    const batch = batchId ? await prisma.insightBatch.findUnique({ where: { id: batchId }, select: { status: true } }) : null;
+    if (!batch || ['COMPLETED', 'CANCELLED'].includes(batch.status)) { await job.remove(); removed++; }
+  }
+  return { durable: batches.length, rebuilt, removed };
+}
+
+export async function rebuildDeadLetterQueue(queue: Queue) {
+  const failed = await prisma.jobRecord.findMany({ where: { state: 'FAILED', bullJobId: { not: null } } });
+  let rebuilt = 0;
+  for (const record of failed) {
+    const sourceJobId = record.bullJobId!;
+    const jobId = deadLetterJobId(record.queue, sourceJobId);
+    if (!await queue.getJob(jobId)) {
+      await queue.add('dead-letter', { sourceQueue: record.queue, sourceJobId, name: record.name, payload: record.payload, attempts: record.attempts, errorMessage: record.errorMessage ?? 'Falha sem mensagem' }, { jobId, attempts: 1 });
+      rebuilt++;
+    }
+  }
+  let removed = 0;
+  for (const job of await queue.getJobs(['waiting', 'delayed', 'paused'])) {
+    const exists = await prisma.jobRecord.count({ where: { state: 'FAILED', queue: String(job.data?.sourceQueue ?? ''), bullJobId: String(job.data?.sourceJobId ?? '') } });
+    if (!exists) { await job.remove(); removed++; }
+  }
+  return { durable: failed.length, rebuilt, removed };
+}
+
+export async function reconcileDurableJobRecords() {
+  const live = await prisma.jobRecord.findMany({ where: { state: { in: ['WAITING', 'ACTIVE', 'RECOVERING', 'DELAYED'] } } });
+  let corrected = 0;
+  for (const record of live) {
+    let entityStatus: string | null = null;
+    if (record.queue === 'prospecting' && record.runId) entityStatus = (await prisma.prospectingRun.findUnique({ where: { id: record.runId }, select: { status: true } }))?.status ?? null;
+    if (record.queue === 'website-analysis') entityStatus = (await prisma.websiteAnalysis.findUnique({ where: { id: String((record.payload as any)?.analysisId ?? '') }, select: { status: true } }))?.status ?? null;
+    if (record.queue === 'campaign') entityStatus = (await prisma.campaign.findUnique({ where: { id: String((record.payload as any)?.campaignId ?? '') }, select: { status: true } }))?.status ?? null;
+    if (record.queue === 'insight-batch') entityStatus = (await prisma.insightBatch.findUnique({ where: { id: String((record.payload as any)?.batchId ?? '') }, select: { status: true } }))?.status ?? null;
+    const running = ['PENDING', 'QUEUED', 'WAITING', 'ACTIVE', 'RUNNING', 'RECOVERING', 'SCHEDULED'].includes(entityStatus ?? '');
+    if (running) continue;
+    const state = entityStatus === 'COMPLETED' ? 'COMPLETED' : entityStatus === 'FAILED' ? 'FAILED' : 'CANCELLED';
+    await prisma.jobRecord.update({ where: { id: record.id }, data: { state, completedAt: new Date(), errorMessage: state === 'CANCELLED' && !entityStatus ? 'Entidade de origem não existe mais' : record.errorMessage } });
+    corrected++;
+  }
+  return { inspected: live.length, corrected };
 }
 
 export async function refreshStaleWebsiteAnalyses(queue: Queue, now = new Date(), staleDays = 30, batchSize = 20) {
