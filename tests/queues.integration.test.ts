@@ -7,7 +7,7 @@ const connection = { host: process.env.REDIS_HOST ?? 'redis', port: Number(proce
 
 describe('configuração das filas', () => {
   it('mantém filas operacionais separadas', () => {
-    expect(new Set(Object.values(QUEUES)).size).toBe(4);
+    expect(new Set(Object.values(QUEUES)).size).toBe(5);
     expect(QUEUES.websiteAnalysis).toBe('website-analysis');
   });
 

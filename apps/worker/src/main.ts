@@ -2,8 +2,8 @@ import { Worker, Job } from 'bullmq';
 import { createWebsiteAnalysisIntent, persistDiscoveryProgress, prisma, recordServiceHeartbeat } from '@prospector/database';
 import type { ProspectingRun, SearchCell } from '@prospector/database';
 import { enqueueWebsiteAnalysis, queueOptions, QUEUES } from '@prospector/queues';
-import { analyzeWebsite, GooglePlacesProvider, PageSpeedProvider, websiteAnalysisVersion, WhatsAppCloudProvider } from '@prospector/integrations';
-import { calculateLeadScore, generateGeographicGrid, logger, normalizePhone, normalizeText, phoneType, resolveTemplateVariable } from '@prospector/shared';
+import { AiInsightProvider, analyzeWebsite, GooglePlacesProvider, PageSpeedProvider, websiteAnalysisVersion, WhatsAppCloudProvider } from '@prospector/integrations';
+import { businessWhere, calculateLeadScore, generateGeographicGrid, logger, normalizePhone, normalizeText, phoneType, resolveTemplateVariable } from '@prospector/shared';
 import type { GeographicBounds } from '@prospector/shared';
 
 const log=logger('worker');
@@ -191,12 +191,43 @@ async function processCampaign(job:Job<{campaignId:string}>){
   }catch(error:any){campaignLog.error({error:error.message},'campaign job failed');throw error}
 }
 
+async function processInsightBatch(job:Job<{batchId:string}>){
+  const batchLog=log.child({jobId:job.id,batchId:job.data.batchId});
+  const batch=await prisma.insightBatch.findUnique({where:{id:job.data.batchId}});
+  if(!batch||['COMPLETED','CANCELLED'].includes(batch.status))return;
+  await prisma.insightBatch.update({where:{id:batch.id},data:{status:'ACTIVE',startedAt:batch.startedAt??new Date()}});
+  const where={...businessWhere(batch.filters as any),...(batch.onlyMissing?{insight:null}:{})};
+  const businesses=await prisma.business.findMany({where,orderBy:{leadScore:'desc'},take:batch.totalBusinesses});
+  const provider=new AiInsightProvider();
+  try{
+    for(const business of businesses){
+      const current=await prisma.insightBatch.findUnique({where:{id:batch.id},select:{status:true}});
+      if(current?.status==='CANCELLED'){batchLog.warn('insight batch cancelled');return}
+      try{
+        const result=await provider.generateLeadInsight({name:business.name,category:business.category,city:business.city,state:business.state,siteStatus:business.siteStatus,hasWebsite:Boolean(business.website),reviewsCount:business.reviewsCount??0,rating:business.rating,leadScore:business.leadScore,technologies:(business.technologies as string[])??[]});
+        await prisma.businessInsight.upsert({where:{businessId:business.id},update:{summary:result.summary,suggestedPitch:result.suggestedPitch,model:result.model,approved:false,generatedAt:new Date()},create:{businessId:business.id,summary:result.summary,suggestedPitch:result.suggestedPitch,model:result.model}});
+        await prisma.insightBatch.update({where:{id:batch.id},data:{processedCount:{increment:1},generatedCount:{increment:1}}});
+      }catch(error:any){
+        batchLog.warn({businessId:business.id,error:error.message},'insight batch item failed');
+        await prisma.insightBatch.update({where:{id:batch.id},data:{processedCount:{increment:1},failedCount:{increment:1}}});
+      }
+    }
+    await prisma.insightBatch.update({where:{id:batch.id},data:{status:'COMPLETED',completedAt:new Date()}});
+    batchLog.info({total:businesses.length},'insight batch completed');
+  }catch(error:any){
+    await prisma.insightBatch.update({where:{id:batch.id},data:{status:'FAILED',errorMessage:error.message}}).catch(()=>{});
+    batchLog.error({error:error.message},'insight batch failed');
+    throw error;
+  }
+}
+
 const prospectWorker=new Worker(QUEUES.prospecting,processRun,{...queueOptions(),concurrency:Number(process.env.WORKER_CONCURRENCY??5),limiter:{max:Number(process.env.MAX_REQUESTS_PER_SECOND??5),duration:1000}});
 const websiteWorker=new Worker(QUEUES.websiteAnalysis,processWebsiteAnalysis,{...queueOptions(),concurrency:Number(process.env.WEBSITE_ANALYZER_CONCURRENCY??3),limiter:{max:Number(process.env.WEBSITE_ANALYZER_REQUESTS_PER_SECOND??3),duration:1000}});
 const campaignWorker=new Worker(QUEUES.campaign,processCampaign,{...queueOptions(),concurrency:1});
-for(const worker of [prospectWorker,websiteWorker,campaignWorker]){worker.on('active',j=>prisma.jobRecord.updateMany({where:{bullJobId:j.id},data:{state:'ACTIVE',startedAt:new Date(),attempts:{increment:1}}}).catch(()=>{}));worker.on('failed',(j,e)=>log.error({jobId:j?.id,runId:(j?.data as any)?.runId,analysisId:(j?.data as any)?.analysisId,campaignId:(j?.data as any)?.campaignId,error:e.message},'job failed'))}
+const insightBatchWorker=new Worker(QUEUES.insightBatch,processInsightBatch,{...queueOptions(),concurrency:1});
+for(const worker of [prospectWorker,websiteWorker,campaignWorker,insightBatchWorker]){worker.on('active',j=>prisma.jobRecord.updateMany({where:{bullJobId:j.id},data:{state:'ACTIVE',startedAt:new Date(),attempts:{increment:1}}}).catch(()=>{}));worker.on('failed',(j,e)=>log.error({jobId:j?.id,runId:(j?.data as any)?.runId,analysisId:(j?.data as any)?.analysisId,campaignId:(j?.data as any)?.campaignId,batchId:(j?.data as any)?.batchId,error:e.message},'job failed'))}
 const heartbeat=()=>Promise.all([recordServiceHeartbeat('worker'),recordServiceHeartbeat('website-analyzer')]).catch(error=>log.error({error:error.message},'worker heartbeat failed'));
 const serviceHeartbeatTimer=setInterval(heartbeat,15000);
 heartbeat();
-async function shutdown(signal:string){log.info({signal},'graceful shutdown');clearInterval(serviceHeartbeatTimer);await Promise.all([prospectWorker.close(),websiteWorker.close(),campaignWorker.close()]);await prisma.$disconnect();process.exit(0)}
+async function shutdown(signal:string){log.info({signal},'graceful shutdown');clearInterval(serviceHeartbeatTimer);await Promise.all([prospectWorker.close(),websiteWorker.close(),campaignWorker.close(),insightBatchWorker.close()]);await prisma.$disconnect();process.exit(0)}
 process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));log.info('worker online');whatsappLog.info('whatsapp processor online');

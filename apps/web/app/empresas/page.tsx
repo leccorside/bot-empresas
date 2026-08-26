@@ -82,6 +82,8 @@ export default function Businesses() {
   const [campaignForm, setCampaignForm] = useState({ name: '', templateId: '' });
   const [campaignBusy, setCampaignBusy] = useState(false);
   const [campaignMessage, setCampaignMessage] = useState('');
+  const [batch, setBatch] = useState<any>(null);
+  const [batchBusy, setBatchBusy] = useState(false);
   const approvedTemplates = templates.filter((template: any) => template.status === 'APPROVED');
   const segmentHasFilters = Object.keys(segmentSuggestion?.filters ?? {}).length > 0;
   const cities = useMemo(() => options.locations.filter((location: any) => !filters.state || location.state === filters.state), [options.locations, filters.state]);
@@ -103,6 +105,11 @@ export default function Businesses() {
     if (!segmentHasFilters) { setSegmentCount(null); return; }
     api(`businesses?${segmentFiltersToParams(segmentSuggestion.filters).toString()}&pageSize=1`).then(result => setSegmentCount(result.total)).catch(() => setSegmentCount(null));
   }, [segmentSuggestion]);
+  useEffect(() => {
+    if (!batch || ['COMPLETED', 'FAILED', 'CANCELLED'].includes(batch.status)) return;
+    const timer = setInterval(() => { api(`insights/batch/${batch.id}`).then(setBatch).catch(() => {}); }, 2000);
+    return () => clearInterval(timer);
+  }, [batch?.id, batch?.status]);
   function submit(event: FormEvent) { event.preventDefault(); load(); }
   function clear() { setFilters(initialFilters); load(initialFilters); }
   function update(key: keyof Filters, value: string) { setFilters(current => ({ ...current, [key]: value })); }
@@ -163,6 +170,19 @@ export default function Businesses() {
     finally { setAnalyzingId(''); }
   }
 
+  async function startInsightBatch() {
+    if (!confirm(`Gerar insights de IA em lote para as empresas do filtro atual que ainda não têm insight (respeitando o limite por lote)? Isso consome créditos das APIs de IA.`)) return;
+    setBatchBusy(true); setError('');
+    try { setBatch(await api('insights/batch', { method: 'POST', body: JSON.stringify({ filters, onlyMissing: true }) })); }
+    catch (requestError: any) { setError(requestError.message ?? 'Falha ao iniciar geração em lote'); }
+    finally { setBatchBusy(false); }
+  }
+  async function cancelInsightBatch() {
+    if (!batch) return;
+    try { setBatch(await api(`insights/batch/${batch.id}/cancel`, { method: 'POST' })); }
+    catch (requestError: any) { setError(requestError.message ?? 'Falha ao cancelar lote'); }
+  }
+
   const size = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
 
   return <Shell title="Empresas" subtitle={`${data.total ?? 0} empresas correspondem aos filtros`}>
@@ -209,7 +229,17 @@ export default function Businesses() {
         <div className="filterActions"><button className="btn" type="submit" disabled={loading}>{loading ? 'Filtrando…' : 'Aplicar filtros'}</button><button className="btn secondary" type="button" onClick={clear}>Limpar</button></div>
       </form>
     </section>
-    <div className="toolbar"><span className="spacer"/><button disabled={Boolean(exportBusy)} className="btn secondary" onClick={() => createExport('CSV')}>{exportBusy === 'CSV' ? 'Gerando CSV…' : 'Exportar CSV'}</button><button disabled={Boolean(exportBusy)} className="btn secondary" onClick={() => createExport('XLSX')}>{exportBusy === 'XLSX' ? 'Gerando XLSX…' : 'Exportar XLSX'}</button></div>
+    <div className="toolbar">
+      <button disabled={batchBusy || (batch && !['COMPLETED', 'FAILED', 'CANCELLED'].includes(batch.status))} className="btn secondary" onClick={startInsightBatch}>{batchBusy ? 'Iniciando…' : 'Gerar insights em lote'}</button>
+      <span className="spacer"/>
+      <button disabled={Boolean(exportBusy)} className="btn secondary" onClick={() => createExport('CSV')}>{exportBusy === 'CSV' ? 'Gerando CSV…' : 'Exportar CSV'}</button><button disabled={Boolean(exportBusy)} className="btn secondary" onClick={() => createExport('XLSX')}>{exportBusy === 'XLSX' ? 'Gerando XLSX…' : 'Exportar XLSX'}</button>
+    </div>
+    {batch && <section className="card">
+      <div className="filtersHeader"><h2 className="sectionTitle">Geração de insights em lote</h2><Status value={batch.status} /></div>
+      <div className="tableHint">{batch.processedCount}/{batch.totalBusinesses} processadas · {batch.generatedCount} geradas · {batch.failedCount} falharam{batch.errorMessage ? ` · ${batch.errorMessage}` : ''}</div>
+      {['WAITING', 'ACTIVE', 'RECOVERING'].includes(batch.status) && <div className="rowActions" style={{ marginTop: 8 }}><button className="btn secondary sm" onClick={cancelInsightBatch}>Cancelar lote</button></div>}
+      {batch.status === 'COMPLETED' && <div className="rowActions" style={{ marginTop: 8 }}><button className="btn secondary sm" onClick={() => load()}>Atualizar lista</button></div>}
+    </section>}
     <section className="card">{data.items.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Empresa</th><th>Categoria</th><th>Cidade</th><th>Telefone</th><th>WhatsApp</th><th>Website Analyzer</th><th>Rating</th><th>Avaliações</th><th>Lead Score</th><th>CRM</th><th>Ação</th></tr></thead><tbody>{data.items.map((business: any) => <BusinessRow key={business.id} business={business} analyzingId={analyzingId} onAnalyze={analyze} />)}</tbody></table></div> : <Empty>Nenhuma empresa corresponde aos filtros.</Empty>}</section>
     <section className="card exportHistory"><h2 className="sectionTitle">Exportações persistentes</h2>{exports.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Arquivo</th><th>Formato</th><th>Linhas</th><th>Tamanho</th><th>Status</th><th>Criado</th><th>Ação</th></tr></thead><tbody>{exports.map(item => <tr key={item.id}><td>{item.filename}</td><td>{item.format}</td><td>{item.rowCount}</td><td>{size(item.sizeBytes)}</td><td><Status value={item.status} /></td><td>{new Date(item.createdAt).toLocaleString('pt-BR')}</td><td>{item.status === 'COMPLETED' && <button className="btn secondary sm" onClick={() => download(`exports/${item.id}/download`, item.filename)}>Baixar novamente</button>}</td></tr>)}</tbody></table></div> : <Empty>Nenhuma exportação gerada.</Empty>}</section>
     {campaignMessage && <div className="toast">{campaignMessage}</div>}

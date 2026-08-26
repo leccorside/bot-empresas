@@ -6,14 +6,12 @@ import { randomUUID } from 'crypto';
 import { mkdir, rename, stat, unlink, writeFile } from 'fs/promises';
 import path from 'path';
 import { createWebsiteAnalysisIntent, prisma } from '@prospector/database';
-import { enqueueRun, enqueueWebsiteAnalysis, prospectingQueue, campaignQueue, websiteAnalysisQueue } from '@prospector/queues';
+import { enqueueInsightBatch, enqueueRun, enqueueWebsiteAnalysis, insightBatchQueue, prospectingQueue, campaignQueue, websiteAnalysisQueue } from '@prospector/queues';
 import { AiInsightProvider, detectOptOutIntent, verifyWhatsAppWebhookSignature, websiteAnalysisVersion, WhatsAppTemplateProvider } from '@prospector/integrations';
-import { heartbeatStatus, nextScheduleOccurrence, normalizePhone, parseAutopilotConfig, validateCronExpression, validateTimezone } from '@prospector/shared';
+import { businessWhere, heartbeatStatus, nextScheduleOccurrence, normalizePhone, parseAutopilotConfig, validateCronExpression, validateTimezone } from '@prospector/shared';
 import { autopilotConfigSchema, autopilotTargetSchema, businessFilterSchema, createRunSchema, createScheduleSchema, messageTemplateSchema, segmentGoalSchema } from '@prospector/validation';
 import { businessExportValues, exportColumns, persistentExportFilename, renderBusinessesCsv, safeExportPath } from './exports';
 import { directorySize, emptyQueueCounts, mergeQueueCounts, normalizeQueueCounts } from './operations';
-
-function businessWhere(q:any){const where:any={};if(q.search)where.OR=[{name:{contains:q.search,mode:'insensitive'}},{address:{contains:q.search,mode:'insensitive'}}];if(q.city)where.city=q.city;if(q.state)where.state=q.state;if(q.category)where.category=q.category;if(q.hasWebsite!=null)where.website=q.hasWebsite?{not:null}:null;if(q.siteStatus)where.siteStatus=q.siteStatus;if(q.hasPhone!=null)where.phone=q.hasPhone?{not:null}:null;if(q.whatsappStatus)where.phones={some:{whatsappStatus:q.whatsappStatus}};if(q.leadStatus)where.leadStatus=q.leadStatus;if(q.minRating!=null||q.maxRating!=null)where.rating={...(q.minRating!=null?{gte:q.minRating}:{}),...(q.maxRating!=null?{lte:q.maxRating}:{})};if(q.minReviews!=null||q.maxReviews!=null)where.reviewsCount={...(q.minReviews!=null?{gte:q.minReviews}:{}),...(q.maxReviews!=null?{lte:q.maxReviews}:{})};if(q.minScore!=null||q.maxScore!=null)where.leadScore={...(q.minScore!=null?{gte:q.minScore}:{}),...(q.maxScore!=null?{lte:q.maxScore}:{})};return where}
 
 @Injectable()
 export class ApiService {
@@ -75,6 +73,23 @@ export class ApiService {
     if(filters.siteStatus&&!allowedSiteStatuses.includes(filters.siteStatus))delete filters.siteStatus;
     return{filters,explanation:result.explanation};
   }
+  async createInsightBatch(raw:any){
+    const parsed=businessFilterSchema.safeParse(raw?.filters??{});
+    if(!parsed.success)throw new BadRequestException({message:'Filtros inválidos',issues:parsed.error.issues.map(issue=>({field:issue.path.join('.'),message:issue.message}))});
+    const {page:_page,pageSize:_pageSize,...filters}=parsed.data;
+    const onlyMissing=raw?.onlyMissing!==false;
+    const maxSize=Math.max(1,Number(process.env.INSIGHT_BATCH_MAX_SIZE??30));
+    const where={...businessWhere(filters),...(onlyMissing?{insight:null}:{})};
+    const matched=await prisma.business.count({where});
+    if(!matched)throw new BadRequestException(`Nenhuma empresa corresponde a esse filtro${onlyMissing?' (ou todas já têm insight gerado)':''}`);
+    const batch=await prisma.insightBatch.create({data:{filters,onlyMissing,totalBusinesses:Math.min(matched,maxSize)}});
+    const job=await enqueueInsightBatch(batch.id);
+    await prisma.jobRecord.create({data:{queue:'insight-batch',name:'generate-insight-batch',idempotencyKey:`insight-batch:${batch.id}`,bullJobId:job.id,payload:{batchId:batch.id}}});
+    return batch;
+  }
+  insightBatches(){return prisma.insightBatch.findMany({orderBy:{createdAt:'desc'},take:20})}
+  async insightBatch(id:string){const batch=await prisma.insightBatch.findUnique({where:{id}});if(!batch)throw new NotFoundException('Lote não encontrado');return batch}
+  async cancelInsightBatch(id:string){const batch=await prisma.insightBatch.findUnique({where:{id}});if(!batch)throw new NotFoundException('Lote não encontrado');if(['COMPLETED','CANCELLED','FAILED'].includes(batch.status))return batch;const queue=insightBatchQueue();try{await(await queue.getJob(`insight-batch-${id}`))?.remove()}catch{}finally{await queue.close()}return prisma.insightBatch.update({where:{id},data:{status:'CANCELLED',completedAt:new Date()}})}
   schedules(){return prisma.schedule.findMany({orderBy:{createdAt:'desc'}})}
   async createSchedule(raw:any){const body=this.parseSchedule(raw);return prisma.schedule.create({data:this.normalizeSchedule(body) as any})}
   async updateSchedule(id:string,raw:any){const current=await prisma.schedule.findUnique({where:{id}});if(!current)throw new NotFoundException('Agendamento não encontrado');const body=this.parseSchedule({...current,...raw});return prisma.schedule.update({where:{id},data:this.normalizeSchedule(body) as any})}

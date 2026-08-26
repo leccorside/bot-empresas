@@ -1,6 +1,6 @@
 import type { Queue } from 'bullmq';
 import { createWebsiteAnalysisIntent, prisma } from '@prospector/database';
-import { ensureWebsiteAnalysisJob } from '@prospector/queues';
+import { ensureInsightBatchJob, ensureWebsiteAnalysisJob } from '@prospector/queues';
 import { websiteAnalysisVersion } from '@prospector/integrations';
 import { staleWebsiteCutoff } from './policy';
 
@@ -78,6 +78,25 @@ export async function rebuildWebsiteAnalysisQueue(queue: Queue, now = new Date()
     });
   }
   return { durable: analyses.length, rebuilt };
+}
+
+export async function rebuildInsightBatchQueue(queue: Queue, now = new Date(), staleSeconds = 120) {
+  const staleAt = new Date(now.getTime() - staleSeconds * 1000);
+  const batches = await prisma.insightBatch.findMany({ where: { OR: [{ status: { in: ['WAITING', 'RECOVERING'] } }, { status: 'ACTIVE', updatedAt: { lte: staleAt } }] } });
+  let rebuilt = 0;
+  for (const batch of batches) {
+    const recovering = batch.status === 'ACTIVE' || batch.status === 'RECOVERING';
+    if (batch.status === 'ACTIVE') await prisma.insightBatch.update({ where: { id: batch.id }, data: { status: 'RECOVERING' } });
+    const before = await queue.getJob(`insight-batch-${batch.id}`);
+    const job = await ensureInsightBatchJob(queue, batch.id);
+    if (!before) rebuilt++;
+    await prisma.jobRecord.upsert({
+      where: { idempotencyKey: `insight-batch:${batch.id}` },
+      update: { bullJobId: job.id, state: recovering ? 'RECOVERING' : 'WAITING', errorMessage: null, payload: { batchId: batch.id } },
+      create: { queue: 'insight-batch', name: 'generate-insight-batch', bullJobId: job.id, idempotencyKey: `insight-batch:${batch.id}`, state: recovering ? 'RECOVERING' : 'WAITING', payload: { batchId: batch.id } },
+    });
+  }
+  return { durable: batches.length, rebuilt };
 }
 
 export async function refreshStaleWebsiteAnalyses(queue: Queue, now = new Date(), staleDays = 30, batchSize = 20) {

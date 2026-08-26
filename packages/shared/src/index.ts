@@ -237,6 +237,23 @@ export function shouldDispatchAutopilot(input: { activeCount: number; dispatched
 export function startOfLocalDay(now: Date) { const date = new Date(now); date.setHours(0, 0, 0, 0); return date; }
 export function startOfLocalMonth(now: Date) { const date = new Date(now); date.setDate(1); date.setHours(0, 0, 0, 0); return date; }
 
+export function businessWhere(q: any): any {
+  const where: any = {};
+  if (q.search) where.OR = [{ name: { contains: q.search, mode: 'insensitive' } }, { address: { contains: q.search, mode: 'insensitive' } }];
+  if (q.city) where.city = q.city;
+  if (q.state) where.state = q.state;
+  if (q.category) where.category = q.category;
+  if (q.hasWebsite != null) where.website = q.hasWebsite ? { not: null } : null;
+  if (q.siteStatus) where.siteStatus = q.siteStatus;
+  if (q.hasPhone != null) where.phone = q.hasPhone ? { not: null } : null;
+  if (q.whatsappStatus) where.phones = { some: { whatsappStatus: q.whatsappStatus } };
+  if (q.leadStatus) where.leadStatus = q.leadStatus;
+  if (q.minRating != null || q.maxRating != null) where.rating = { ...(q.minRating != null ? { gte: q.minRating } : {}), ...(q.maxRating != null ? { lte: q.maxRating } : {}) };
+  if (q.minReviews != null || q.maxReviews != null) where.reviewsCount = { ...(q.minReviews != null ? { gte: q.minReviews } : {}), ...(q.maxReviews != null ? { lte: q.maxReviews } : {}) };
+  if (q.minScore != null || q.maxScore != null) where.leadScore = { ...(q.minScore != null ? { gte: q.minScore } : {}), ...(q.maxScore != null ? { lte: q.maxScore } : {}) };
+  return where;
+}
+
 export function heartbeatStatus(value: unknown, maxAgeMs: number, now = new Date()): 'ONLINE' | 'OFFLINE' {
   if (!value || typeof value !== 'object') return 'OFFLINE';
   const heartbeatAt = (value as { heartbeatAt?: unknown }).heartbeatAt;

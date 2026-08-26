@@ -346,6 +346,23 @@ model BusinessInsight {
   updatedAt DateTime @updatedAt
 }
 
+model InsightBatch {
+  id String @id @default(cuid())
+  filters Json @default("{}")
+  onlyMissing Boolean @default(true)
+  status JobState @default(WAITING)
+  totalBusinesses Int @default(0)
+  processedCount Int @default(0)
+  generatedCount Int @default(0)
+  failedCount Int @default(0)
+  errorMessage String?
+  startedAt DateTime?
+  completedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([status, updatedAt])
+}
+
 model WebsiteAnalysis {
   id String @id @default(cuid())
   businessId String

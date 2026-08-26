@@ -22,6 +22,10 @@ export class ApiController {
   @Post('businesses/:id/insight') generateLeadInsight(@Param('id') id:string){return this.service.generateLeadInsight(id)}
   @Post('businesses/:id/insight/approve') approveInsight(@Param('id') id:string){return this.service.approveInsight(id)}
   @Post('segments/suggest') suggestSegment(@Body() body:any){return this.service.suggestSegment(body)}
+  @Get('insights/batch') insightBatches(){return this.service.insightBatches()}
+  @Post('insights/batch') createInsightBatch(@Body() body:any){return this.service.createInsightBatch(body)}
+  @Get('insights/batch/:id') insightBatch(@Param('id') id:string){return this.service.insightBatch(id)}
+  @Post('insights/batch/:id/cancel') cancelInsightBatch(@Param('id') id:string){return this.service.cancelInsightBatch(id)}
   @Get('schedules') schedules(){return this.service.schedules()}
   @Post('schedules') createSchedule(@Body() body:any){return this.service.createSchedule(body)}
   @Patch('schedules/:id') updateSchedule(@Param('id') id:string,@Body() body:any){return this.service.updateSchedule(id,body)}
