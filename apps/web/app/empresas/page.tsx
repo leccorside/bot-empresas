@@ -13,6 +13,13 @@ type Filters = {
 const initialFilters: Filters = { search: '', state: '', city: '', category: '', hasWebsite: '', siteStatus: '', hasPhone: '', whatsappStatus: '', minRating: '', maxRating: '', minReviews: '', maxReviews: '', minScore: '', maxScore: '' };
 const siteLabels: Record<string, string> = { NO_WEBSITE: 'Sem site', POOR: 'Ruim', AVERAGE: 'Médio', GOOD: 'Bom', UNKNOWN: 'Desconhecido' };
 const whatsappLabels: Record<string, string> = { UNKNOWN: 'Desconhecido', AVAILABLE: 'Disponível', NOT_AVAILABLE: 'Indisponível', INVALID: 'Inválido' };
+const segmentFilterKeys = ['city', 'category', 'hasWebsite', 'siteStatus', 'minScore', 'maxScore', 'minReviews', 'maxReviews'] as const;
+
+function segmentFiltersToParams(filters: Record<string, unknown>) {
+  const params = new URLSearchParams();
+  for (const key of segmentFilterKeys) if (filters[key] !== undefined) params.set(key, String(filters[key]));
+  return params;
+}
 
 function WebsiteSummary({ business }: { business: any }) {
   if (!business.website) return <Status value="NO_WEBSITE" />;
@@ -70,6 +77,13 @@ export default function Businesses() {
   const [segmentGoal, setSegmentGoal] = useState('');
   const [segmentSuggestion, setSegmentSuggestion] = useState<any>(null);
   const [segmentBusy, setSegmentBusy] = useState(false);
+  const [segmentCount, setSegmentCount] = useState<number | null>(null);
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [campaignForm, setCampaignForm] = useState({ name: '', templateId: '' });
+  const [campaignBusy, setCampaignBusy] = useState(false);
+  const [campaignMessage, setCampaignMessage] = useState('');
+  const approvedTemplates = templates.filter((template: any) => template.status === 'APPROVED');
+  const segmentHasFilters = Object.keys(segmentSuggestion?.filters ?? {}).length > 0;
   const cities = useMemo(() => options.locations.filter((location: any) => !filters.state || location.state === filters.state), [options.locations, filters.state]);
   const states = useMemo(() => Array.from(new Set<string>(options.locations.map((location: any) => location.state))), [options.locations]);
 
@@ -84,7 +98,11 @@ export default function Businesses() {
   }
 
   async function loadExports() { try { setExports(await api('exports')); } catch (requestError: any) { setError(requestError.message); } }
-  useEffect(() => { api('businesses/filter-options').then(setOptions); load(initialFilters); loadExports(); }, []);
+  useEffect(() => { api('businesses/filter-options').then(setOptions); load(initialFilters); loadExports(); api('templates').then(setTemplates); }, []);
+  useEffect(() => {
+    if (!segmentHasFilters) { setSegmentCount(null); return; }
+    api(`businesses?${segmentFiltersToParams(segmentSuggestion.filters).toString()}&pageSize=1`).then(result => setSegmentCount(result.total)).catch(() => setSegmentCount(null));
+  }, [segmentSuggestion]);
   function submit(event: FormEvent) { event.preventDefault(); load(); }
   function clear() { setFilters(initialFilters); load(initialFilters); }
   function update(key: keyof Filters, value: string) { setFilters(current => ({ ...current, [key]: value })); }
@@ -113,18 +131,21 @@ export default function Businesses() {
     finally { setSegmentBusy(false); }
   }
   function applySuggestedFilters() {
-    const f = segmentSuggestion?.filters ?? {};
-    setFilters(current => ({
-      ...current,
-      ...(f.city !== undefined ? { city: f.city } : {}),
-      ...(f.category !== undefined ? { category: f.category } : {}),
-      ...(f.hasWebsite !== undefined ? { hasWebsite: String(f.hasWebsite) } : {}),
-      ...(f.siteStatus !== undefined ? { siteStatus: f.siteStatus } : {}),
-      ...(f.minScore !== undefined ? { minScore: String(f.minScore) } : {}),
-      ...(f.maxScore !== undefined ? { maxScore: String(f.maxScore) } : {}),
-      ...(f.minReviews !== undefined ? { minReviews: String(f.minReviews) } : {}),
-      ...(f.maxReviews !== undefined ? { maxReviews: String(f.maxReviews) } : {}),
-    }));
+    const f: Record<string, unknown> = segmentSuggestion?.filters ?? {};
+    setFilters(current => {
+      const next = { ...current };
+      for (const key of segmentFilterKeys) if (f[key] !== undefined) (next as any)[key] = String(f[key]);
+      return next;
+    });
+  }
+  async function createCampaignFromSegment(event: FormEvent) {
+    event.preventDefault(); setCampaignBusy(true); setError(''); setCampaignMessage('');
+    try {
+      await api('campaigns', { method: 'POST', body: JSON.stringify({ name: campaignForm.name, templateId: campaignForm.templateId, filters: segmentSuggestion.filters }) });
+      setCampaignMessage('Campanha criada em rascunho a partir do segmento. Vá em CRM & Campanhas para revisar e agendar o envio.');
+      setCampaignForm({ name: '', templateId: '' });
+    } catch (requestError: any) { setError(requestError.message ?? 'Falha ao criar campanha'); }
+    finally { setCampaignBusy(false); }
   }
 
   async function analyze(business: any) {
@@ -152,8 +173,21 @@ export default function Businesses() {
         <div className="filterActions"><button type="button" className="btn secondary" disabled={segmentBusy || segmentGoal.trim().length < 5} onClick={suggestSegment}>{segmentBusy ? 'Sugerindo…' : 'Sugerir filtros'}</button></div>
       </div>
       {segmentSuggestion && <div className="tableHint" style={{ marginTop: 10 }}>
-        {segmentSuggestion.explanation} {Object.keys(segmentSuggestion.filters ?? {}).length > 0 && <button type="button" className="btn sm" style={{ marginLeft: 8 }} onClick={applySuggestedFilters}>Usar esses filtros</button>}
+        {segmentSuggestion.explanation} {segmentHasFilters && <>
+          <button type="button" className="btn sm" style={{ marginLeft: 8 }} onClick={applySuggestedFilters}>Usar esses filtros</button>
+          {segmentCount != null && <span style={{ marginLeft: 8 }}>· {segmentCount} empresa(s) correspondem</span>}
+        </>}
       </div>}
+      {segmentSuggestion && segmentHasFilters && (approvedTemplates.length
+        ? <form className="filterGrid" style={{ marginTop: 12 }} onSubmit={createCampaignFromSegment}>
+            <input className="input" placeholder="Nome da campanha" value={campaignForm.name} onChange={event => setCampaignForm(current => ({ ...current, name: event.target.value }))} required />
+            <select className="input" value={campaignForm.templateId} onChange={event => setCampaignForm(current => ({ ...current, templateId: event.target.value }))} required>
+              <option value="" disabled>Template aprovado…</option>
+              {approvedTemplates.map((template: any) => <option key={template.id} value={template.id}>{template.name}</option>)}
+            </select>
+            <div className="filterActions"><button className="btn" type="submit" disabled={campaignBusy}>{campaignBusy ? 'Criando…' : 'Criar campanha com este segmento'}</button></div>
+          </form>
+        : <div className="tableHint" style={{ marginTop: 8 }}>Cadastre e aprove um template em CRM &amp; Campanhas para criar uma campanha a partir deste segmento.</div>)}
     </section>
     <section className="card filtersCard">
       <div className="filtersHeader"><h2 className="sectionTitle">Filtros</h2><span className={error ? 'filterError' : ''}>{error || (loading ? 'Atualizando…' : `${data.total ?? 0} resultados`)}</span></div>
@@ -178,5 +212,6 @@ export default function Businesses() {
     <div className="toolbar"><span className="spacer"/><button disabled={Boolean(exportBusy)} className="btn secondary" onClick={() => createExport('CSV')}>{exportBusy === 'CSV' ? 'Gerando CSV…' : 'Exportar CSV'}</button><button disabled={Boolean(exportBusy)} className="btn secondary" onClick={() => createExport('XLSX')}>{exportBusy === 'XLSX' ? 'Gerando XLSX…' : 'Exportar XLSX'}</button></div>
     <section className="card">{data.items.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Empresa</th><th>Categoria</th><th>Cidade</th><th>Telefone</th><th>WhatsApp</th><th>Website Analyzer</th><th>Rating</th><th>Avaliações</th><th>Lead Score</th><th>CRM</th><th>Ação</th></tr></thead><tbody>{data.items.map((business: any) => <BusinessRow key={business.id} business={business} analyzingId={analyzingId} onAnalyze={analyze} />)}</tbody></table></div> : <Empty>Nenhuma empresa corresponde aos filtros.</Empty>}</section>
     <section className="card exportHistory"><h2 className="sectionTitle">Exportações persistentes</h2>{exports.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Arquivo</th><th>Formato</th><th>Linhas</th><th>Tamanho</th><th>Status</th><th>Criado</th><th>Ação</th></tr></thead><tbody>{exports.map(item => <tr key={item.id}><td>{item.filename}</td><td>{item.format}</td><td>{item.rowCount}</td><td>{size(item.sizeBytes)}</td><td><Status value={item.status} /></td><td>{new Date(item.createdAt).toLocaleString('pt-BR')}</td><td>{item.status === 'COMPLETED' && <button className="btn secondary sm" onClick={() => download(`exports/${item.id}/download`, item.filename)}>Baixar novamente</button>}</td></tr>)}</tbody></table></div> : <Empty>Nenhuma exportação gerada.</Empty>}</section>
+    {campaignMessage && <div className="toast">{campaignMessage}</div>}
   </Shell>;
 }
