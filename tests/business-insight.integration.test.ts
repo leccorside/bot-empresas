@@ -5,18 +5,22 @@ import { ApiService } from '../apps/api/src/service';
 
 const createdBusinessIds: string[] = [];
 let originalOpenAiKey: string | undefined;
+let originalGeminiKey: string | undefined;
 
 beforeAll(() => prisma.$connect());
 
 beforeEach(() => {
-  // Força modo demo do OpenAiInsightProvider mesmo que o .env tenha uma chave real configurada,
-  // para nunca fazer uma chamada de rede/custo real durante os testes.
+  // Força modo demo do AiInsightProvider mesmo que o .env tenha chaves reais configuradas
+  // (Gemini e/ou OpenAI), para nunca fazer uma chamada de rede/custo real durante os testes.
   originalOpenAiKey = process.env.OPENAI_API_KEY;
+  originalGeminiKey = process.env.GEMINI_API_KEY;
   delete process.env.OPENAI_API_KEY;
+  delete process.env.GEMINI_API_KEY;
 });
 
 afterEach(async () => {
   process.env.OPENAI_API_KEY = originalOpenAiKey;
+  process.env.GEMINI_API_KEY = originalGeminiKey;
   if (createdBusinessIds.length) await prisma.business.deleteMany({ where: { id: { in: createdBusinessIds.splice(0) } } });
 });
 

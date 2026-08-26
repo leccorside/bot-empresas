@@ -7,7 +7,7 @@ import { mkdir, rename, stat, unlink, writeFile } from 'fs/promises';
 import path from 'path';
 import { createWebsiteAnalysisIntent, prisma } from '@prospector/database';
 import { enqueueRun, enqueueWebsiteAnalysis, prospectingQueue, campaignQueue, websiteAnalysisQueue } from '@prospector/queues';
-import { detectOptOutIntent, OpenAiInsightProvider, verifyWhatsAppWebhookSignature, websiteAnalysisVersion, WhatsAppTemplateProvider } from '@prospector/integrations';
+import { AiInsightProvider, detectOptOutIntent, verifyWhatsAppWebhookSignature, websiteAnalysisVersion, WhatsAppTemplateProvider } from '@prospector/integrations';
 import { heartbeatStatus, nextScheduleOccurrence, normalizePhone, parseAutopilotConfig, validateCronExpression, validateTimezone } from '@prospector/shared';
 import { autopilotConfigSchema, autopilotTargetSchema, businessFilterSchema, createRunSchema, createScheduleSchema, messageTemplateSchema, segmentGoalSchema } from '@prospector/validation';
 import { businessExportValues, exportColumns, persistentExportFilename, renderBusinessesCsv, safeExportPath } from './exports';
@@ -63,13 +63,13 @@ export class ApiService {
   async generateLeadInsight(id:string){
     const business=await prisma.business.findUnique({where:{id}});
     if(!business)throw new NotFoundException('Empresa não encontrada');
-    const result=await new OpenAiInsightProvider().generateLeadInsight({name:business.name,category:business.category,city:business.city,state:business.state,siteStatus:business.siteStatus,hasWebsite:Boolean(business.website),reviewsCount:business.reviewsCount??0,rating:business.rating,leadScore:business.leadScore,technologies:(business.technologies as string[])??[]});
+    const result=await new AiInsightProvider().generateLeadInsight({name:business.name,category:business.category,city:business.city,state:business.state,siteStatus:business.siteStatus,hasWebsite:Boolean(business.website),reviewsCount:business.reviewsCount??0,rating:business.rating,leadScore:business.leadScore,technologies:(business.technologies as string[])??[]});
     return prisma.businessInsight.upsert({where:{businessId:id},update:{summary:result.summary,suggestedPitch:result.suggestedPitch,model:result.model,approved:false,generatedAt:new Date()},create:{businessId:id,summary:result.summary,suggestedPitch:result.suggestedPitch,model:result.model}});
   }
   async approveInsight(id:string){const current=await prisma.businessInsight.findUnique({where:{businessId:id}});if(!current)throw new NotFoundException('Nenhum insight gerado para essa empresa ainda');return prisma.businessInsight.update({where:{businessId:id},data:{approved:true}})}
   async suggestSegment(raw:any){
     const parsed=segmentGoalSchema.parse(raw);
-    const result=await new OpenAiInsightProvider().suggestSegment(parsed.goal);
+    const result=await new AiInsightProvider().suggestSegment(parsed.goal);
     const allowedSiteStatuses=['NO_WEBSITE','POOR','AVERAGE','GOOD','UNKNOWN'];
     const filters={...result.filters};
     if(filters.siteStatus&&!allowedSiteStatuses.includes(filters.siteStatus))delete filters.siteStatus;

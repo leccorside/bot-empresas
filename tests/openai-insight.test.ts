@@ -6,29 +6,20 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const businessInput = { name: 'Padaria Boa Vista', category: 'Padarias', city: 'Caldas Novas', state: 'GO', siteStatus: 'NO_WEBSITE', hasWebsite: false, reviewsCount: 0, rating: null, leadScore: 65, technologies: [] };
 
 describe('OpenAiInsightProvider — insight de lead', () => {
-  it('sem chave, gera um insight determinístico em modo demo sem chamar a rede', async () => {
+  it('sem chave, rejeita sem chamar a rede', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
     const provider = new OpenAiInsightProvider('');
-    const first = await provider.generateLeadInsight(businessInput);
-    const second = await provider.generateLeadInsight(businessInput);
-    expect(first).toEqual(second);
-    expect(first.model).toBe('demo');
-    expect(first.summary).toContain('Padaria Boa Vista');
-    expect(first.summary.toLowerCase()).toContain('não possui site');
+    expect(provider.isConfigured()).toBe(false);
+    await expect(provider.generateLeadInsight(businessInput)).rejects.toThrow('Chave da OpenAI não configurada');
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('menciona site ruim quando existe website mas está com status POOR', async () => {
-    const provider = new OpenAiInsightProvider('');
-    const result = await provider.generateLeadInsight({ ...businessInput, hasWebsite: true, siteStatus: 'POOR' });
-    expect(result.summary.toLowerCase()).toContain('problemas técnicos');
   });
 
   it('com chave, consulta a API oficial da OpenAI e retorna o JSON estruturado', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ summary: 'Resumo gerado', suggestedPitch: 'Abordagem sugerida' }) } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     vi.stubGlobal('fetch', fetchMock);
     const provider = new OpenAiInsightProvider('fake-key');
+    expect(provider.isConfigured()).toBe(true);
     const result = await provider.generateLeadInsight(businessInput);
     expect(result).toEqual({ summary: 'Resumo gerado', suggestedPitch: 'Abordagem sugerida', model: 'gpt-4o-mini' });
     const [url, options] = fetchMock.mock.calls[0];
@@ -45,18 +36,12 @@ describe('OpenAiInsightProvider — insight de lead', () => {
 });
 
 describe('OpenAiInsightProvider — sugestão de segmento', () => {
-  it('sem chave, reconhece palavras-chave comuns em modo demo', async () => {
+  it('sem chave, rejeita sem chamar a rede', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
     const provider = new OpenAiInsightProvider('');
-    await expect(provider.suggestSegment('quero empresas sem site em Caldas Novas')).resolves.toMatchObject({ filters: { hasWebsite: false } });
-    await expect(provider.suggestSegment('leads com score alto e melhores oportunidades')).resolves.toMatchObject({ filters: { minScore: 60 } });
-    await expect(provider.suggestSegment('empresas com site ruim e péssimo desempenho')).resolves.toMatchObject({ filters: { siteStatus: 'POOR' } });
-  });
-
-  it('sem chave e sem palavras-chave reconhecidas, retorna filtro vazio com explicação', async () => {
-    const provider = new OpenAiInsightProvider('');
-    const result = await provider.suggestSegment('algo bem genérico e sem sinais claros');
-    expect(result.filters).toEqual({});
-    expect(result.explanation).toContain('OPENAI_API_KEY');
+    await expect(provider.suggestSegment('empresas sem site')).rejects.toThrow('Chave da OpenAI não configurada');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('com chave, consulta a API oficial e retorna o filtro estruturado', async () => {
