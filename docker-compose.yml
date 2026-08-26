@@ -95,6 +95,18 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
     healthcheck: {test: ["CMD-SHELL", "kill -0 1"], interval: 30s, timeout: 5s, retries: 3}
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: prospector-ngrok
+    restart: unless-stopped
+    profiles: [webhooks]
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    command: http api:3001
+    networks: [prospector]
+    depends_on:
+      api: {condition: service_healthy}
+    ports: ["4040:4040"]
 networks:
   prospector: {driver: bridge}
 volumes:

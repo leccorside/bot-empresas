@@ -27,6 +27,16 @@ Toda campanha exige um **template aprovado** — a tela **CRM & Campanhas** ganh
 
 Envio usa a WhatsApp Cloud API (`WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`) com `type:'template'` (não texto livre — obrigatório pela plataforma para mensagens iniciadas pela empresa); em `DRY_RUN=true` nenhuma mensagem sai e o `providerMessageId` fica com prefixo `dry-run:`. Para receber status de entrega/leitura e respostas, configure no app da Meta um webhook apontando para `https://<seu-dominio-publico>/webhooks/whatsapp`, use `WHATSAPP_WEBHOOK_VERIFY_TOKEN` no handshake de verificação e defina `WHATSAPP_APP_SECRET` para validar a assinatura `X-Hub-Signature-256` de cada callback (sem o secret configurado, a assinatura não é validada — adequado para testes locais, mas configure antes de expor a rota publicamente). Callbacks de status atualizam `CampaignMessage` (`DELIVERED`/`READ`/`FAILED`); uma resposta do lead marca a mensagem mais recente como `REPLIED` e avança automaticamente o status do CRM para `REPLIED` (sem retroceder leads já mais adiantados no funil); se a resposta contiver uma intenção de opt-out ("parar", "remover", "sem interesse" etc.), o lead é movido para `DO_NOT_CONTACT` e o telefone suprimido automaticamente, sem intervenção manual. O histórico de mensagens de cada campanha (status, enviada/entregue/lida/respondida) fica visível na tela **CRM & Campanhas**.
 
+### Expor o webhook publicamente para testes (ngrok)
+
+Como a stack roda só localmente, o painel da Meta não consegue alcançar `/webhooks/whatsapp` sem um túnel público. Um serviço `ngrok` está definido no `docker-compose.yml` sob o profile `webhooks` (não sobe com o `docker compose up -d` padrão, para não expor a API por acidente). Defina `NGROK_AUTHTOKEN` no `.env` (pegue em https://dashboard.ngrok.com/get-started/your-authtoken) e suba com:
+
+```bash
+docker compose --profile webhooks up -d ngrok
+```
+
+A URL pública fica disponível em `curl http://localhost:4040/api/tunnels` (ou no painel web em `http://localhost:4040`). Use `https://<url-gerada>/webhooks/whatsapp` como Callback URL no app da Meta. Para parar: `docker compose stop ngrok`.
+
 Cada prospecção resolve o viewport da cidade pela Places API (New), divide-o em células geográficas persistentes e restringe cada busca ao retângulo da célula. O progresso pode ser acompanhado na coluna **Células** e em `GET /runs/:id/cells`. Ajuste `GRID_CELL_SIZE_METERS`, `GRID_MAX_CELLS` e `GOOGLE_PLACES_MAX_PAGES_PER_CELL` no `.env` para controlar cobertura, custo e volume. A resolução do viewport e as buscas usam somente a Places API (New); não é necessário habilitar a Geocoding API.
 
 Empresas com website são enviadas para a fila persistente **Website Analyzer**. O worker verifica status HTTP, HTTPS/SSL, tempo de resposta, viewport, title, description, WordPress e tecnologias, atualiza o Lead Score e mantém o resultado em `WebsiteAnalysis`. A análise também pode ser refeita na tela **Empresas** ou por `POST /businesses/:id/website-analysis`; o histórico fica em `GET /businesses/:id/website-analyses`. Destinos locais, redes privadas, portas não web e redirects inseguros são bloqueados.
