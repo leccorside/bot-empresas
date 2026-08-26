@@ -1,11 +1,20 @@
 import { createHmac, randomUUID } from 'crypto';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../packages/database/src';
 import { normalizePhone } from '../packages/shared/src';
 import { ApiService } from '../apps/api/src/service';
 
 const createdBusinessIds: string[] = [];
 const createdCampaignIds: string[] = [];
+let originalAppSecret: string | undefined;
+
+beforeEach(() => {
+  // Força modo permissivo (sem verificação de assinatura) mesmo que o .env tenha um
+  // WHATSAPP_APP_SECRET real configurado; o teste dedicado de assinatura define e restaura
+  // o próprio valor localmente, sem depender deste.
+  originalAppSecret = process.env.WHATSAPP_APP_SECRET;
+  delete process.env.WHATSAPP_APP_SECRET;
+});
 
 function whatsappFrom(suffix: string) {
   const digits8 = (suffix.replace(/\D/g, '') + '00000000').slice(0, 8);
@@ -22,6 +31,7 @@ function messagePayload(from: string, text: string) {
 beforeAll(() => prisma.$connect());
 
 afterEach(async () => {
+  process.env.WHATSAPP_APP_SECRET = originalAppSecret;
   if (createdBusinessIds.length) {
     const ids = createdBusinessIds.splice(0);
     await prisma.contactSuppression.deleteMany({ where: { businessId: { in: ids } } });

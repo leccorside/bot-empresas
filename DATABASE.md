@@ -8,4 +8,6 @@ O schema Prisma está em `packages/database/prisma/schema.prisma`. Chaves única
 
 `MessageTemplate` guarda o registro de templates de mensagem WhatsApp (nome único, corpo com placeholders `{{1}}`, `{{2}}`..., status de aprovação). `Campaign.templateId` referencia o template usado; `Campaign.messageTemplate` guarda uma cópia do corpo no momento da criação, preservando o que foi efetivamente enviado mesmo que o template seja editado depois.
 
+`BusinessInsight` guarda a análise e a sugestão de abordagem geradas por IA para uma empresa (relação 1:1 com `Business`, regenerar sobrescreve a mesma linha) e a flag `approved`, marcada manualmente quando um humano valida o texto.
+
 Migrations são aplicadas automaticamente no boot dos serviços por `prisma migrate deploy`. O volume `postgres_data` sobrevive a `docker compose down`.

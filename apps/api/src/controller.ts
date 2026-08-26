@@ -18,6 +18,10 @@ export class ApiController {
   @Get('businesses/:id/website-analyses') websiteAnalyses(@Param('id') id:string){return this.service.websiteAnalyses(id)}
   @Post('businesses/:id/website-analysis') analyzeBusinessWebsite(@Param('id') id:string){return this.service.analyzeBusinessWebsite(id)}
   @Patch('businesses/:id/status') leadStatus(@Param('id') id:string,@Body() body:any){return this.service.leadStatus(id,body)}
+  @Get('businesses/:id/insight') getLeadInsight(@Param('id') id:string){return this.service.getLeadInsight(id)}
+  @Post('businesses/:id/insight') generateLeadInsight(@Param('id') id:string){return this.service.generateLeadInsight(id)}
+  @Post('businesses/:id/insight/approve') approveInsight(@Param('id') id:string){return this.service.approveInsight(id)}
+  @Post('segments/suggest') suggestSegment(@Body() body:any){return this.service.suggestSegment(body)}
   @Get('schedules') schedules(){return this.service.schedules()}
   @Post('schedules') createSchedule(@Body() body:any){return this.service.createSchedule(body)}
   @Patch('schedules/:id') updateSchedule(@Param('id') id:string,@Body() body:any){return this.service.updateSchedule(id,body)}

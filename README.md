@@ -55,6 +55,13 @@ A tela **Analytics** (`GET /analytics?days=`) mostra crescimento de empresas des
 
 A mesma tela traz a seção **Analytics comercial** (`GET /analytics/commercial?days=`): funil completo (empresas encontradas → novas → leads qualificados → mensagens enviadas/entregues/lidas/respondidas → interessados → propostas → clientes) e as taxas Delivery/Read/Reply/Interest/Conversion Rate, calculadas a partir dos timestamps de `CampaignMessage` (`sentAt`/`deliveredAt`/`readAt`/`repliedAt`, preenchidos pelos webhooks do WhatsApp), com detalhamento por campanha no período.
 
+## Inteligência (IA assistida)
+
+Sem `OPENAI_API_KEY`, os dois recursos abaixo funcionam em modo demo determinístico (regras simples, sem custo e sem chamada de rede); com a chave, usam a API oficial da OpenAI (`gpt-4o-mini`, saída em JSON estruturado). Em ambos os casos, a IA só **sugere** — nada é aplicado, enviado ou movido automaticamente; um humano decide.
+
+- **Insight de lead** — na tela **Empresas**, o botão "Insight IA" em cada linha gera (`POST /businesses/:id/insight`) uma análise curta da oportunidade e uma sugestão de abordagem personalizada, usando os dados já coletados da empresa (site, avaliações, categoria, cidade, lead score). Pode ser regenerado a qualquer momento e marcado como "Aprovado" (`POST /businesses/:id/insight/approve`) para indicar que um humano validou o texto.
+- **Segmentação inteligente** — no topo da mesma tela, descreva um objetivo em texto livre (ex.: "empresas sem site em Caldas Novas, ideal para oferta de criação de site") e `POST /segments/suggest` devolve um filtro sugerido, pré-preenchendo o formulário de filtros existente — o clique em "Aplicar filtros" continua sendo manual.
+
 ## Autopilot
 
 Na tela **Automações**, cadastre cidades/categorias na fila do Autopilot e ligue o botão **Autopilot**. Com o Autopilot ligado, o scheduler despacha automaticamente uma prospecção por ciclo para a cidade menos recentemente executada, respeitando os limites configuráveis (cidades simultâneas, delay entre disparos, limite diário e limite mensal — persistidos no PostgreSQL, editáveis na própria tela). Ativar o Autopilot não autoriza envio de campanhas: isso continua exigindo `AUTO_SEND_CAMPAIGNS=true` e `DRY_RUN=false` separadamente. **Parar automações** também pausa o Autopilot imediatamente.

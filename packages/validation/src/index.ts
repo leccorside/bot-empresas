@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { templateVariableNames, templateVariablesMatchBody } from '@prospector/shared';
 export const createRunSchema = z.object({ country: z.string().min(2).default('Brasil'), state: z.string().min(2), city: z.string().min(2), category: z.string().min(2).default('Todos'), mode: z.enum(['now','queue']).default('now') });
+export const segmentGoalSchema = z.object({ goal: z.string().trim().min(5).max(500) });
 export const createScheduleSchema = z.object({
   name: z.string().trim().min(2), country: z.string().trim().min(2).default('Brasil'), state: z.string().trim().min(2), city: z.string().trim().min(2),
   category: z.string().trim().min(2).default('Todos'), scheduleType: z.enum(['ONCE','DAILY','WEEKLY','MONTHLY','SPECIFIC_DAYS','CRON']),

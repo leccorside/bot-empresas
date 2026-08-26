@@ -107,7 +107,7 @@ describe('WhatsAppTemplateProvider', () => {
   it('sem credenciais da Meta, aprova localmente em modo demo', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    const provider = new WhatsAppTemplateProvider(undefined, undefined);
+    const provider = new WhatsAppTemplateProvider('', '');
     const result = await provider.submit({ name: 'oportunidade_site', language: 'pt_BR', category: 'MARKETING', bodyText: 'Olá {{1}}!' });
     expect(result).toEqual({ providerTemplateId: 'demo:oportunidade_site', status: 'APPROVED' });
     expect(fetchMock).not.toHaveBeenCalled();

@@ -1,14 +1,27 @@
 import { randomUUID } from 'crypto';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../packages/database/src';
 import { ApiService } from '../apps/api/src/service';
 
 const createdCampaignIds: string[] = [];
 const createdTemplateIds: string[] = [];
+let originalAccessToken: string | undefined;
+let originalWabaId: string | undefined;
 
 beforeAll(() => prisma.$connect());
 
+beforeEach(() => {
+  // Força modo demo do WhatsAppTemplateProvider mesmo que o .env tenha credenciais reais da Meta
+  // configuradas, para nunca submeter um template real nem gastar quota durante os testes.
+  originalAccessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  originalWabaId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+  delete process.env.WHATSAPP_ACCESS_TOKEN;
+  delete process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+});
+
 afterEach(async () => {
+  process.env.WHATSAPP_ACCESS_TOKEN = originalAccessToken;
+  process.env.WHATSAPP_BUSINESS_ACCOUNT_ID = originalWabaId;
   if (createdCampaignIds.length) await prisma.campaign.deleteMany({ where: { id: { in: createdCampaignIds.splice(0) } } });
   if (createdTemplateIds.length) await prisma.messageTemplate.deleteMany({ where: { id: { in: createdTemplateIds.splice(0) } } });
 });

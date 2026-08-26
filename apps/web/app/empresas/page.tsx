@@ -21,6 +21,43 @@ function WebsiteSummary({ business }: { business: any }) {
   return <div className="websiteSummary"><div><a href={safeUrl} target="_blank" rel="noreferrer">Abrir site</a> <Status value={business.siteStatus} /></div><small>{business.siteHttpStatus ?? 'HTTP —'} · {business.siteResponseMs != null ? `${business.siteResponseMs} ms` : 'tempo —'} · {business.hasHttps ? 'HTTPS' : 'sem HTTPS'} · {business.siteSslValid ? 'SSL válido' : 'SSL —'} · {business.hasViewport ? 'responsivo' : 'viewport —'} · {business.performanceScore != null ? `PageSpeed ${business.performanceScore}` : 'PageSpeed —'}</small>{technologies && <small title={technologies}>{technologies}</small>}</div>;
 }
 
+function BusinessRow({ business, analyzingId, onAnalyze }: { business: any; analyzingId: string; onAnalyze: (business: any) => void }) {
+  const [insight, setInsight] = useState<any>(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function toggle() {
+    if (open) { setOpen(false); return; }
+    setOpen(true);
+    if (!insight) { const current = await api(`businesses/${business.id}/insight`); if (current) setInsight(current); }
+  }
+  async function generate() {
+    setBusy(true);
+    try { setInsight(await api(`businesses/${business.id}/insight`, { method: 'POST' })); }
+    finally { setBusy(false); }
+  }
+  async function approve() {
+    setBusy(true);
+    try { setInsight(await api(`businesses/${business.id}/insight/approve`, { method: 'POST' })); }
+    finally { setBusy(false); }
+  }
+
+  return <>
+    <tr>
+      <td><b>{business.name}</b></td><td>{business.category}</td><td>{business.city}/{business.state}</td><td>{business.phone ?? '—'}</td><td>{business.phones?.[0]?.whatsappStatus ?? 'UNKNOWN'}</td><td><WebsiteSummary business={business} /></td><td>{business.rating ?? '—'}</td><td>{business.reviewsCount ?? 0}</td><td><b style={{ color: business.leadScore >= 60 ? 'var(--brand)' : 'inherit' }}>{business.leadScore}</b></td><td><Status value={business.leadStatus} /></td>
+      <td><div className="rowActions"><button className="btn secondary sm" disabled={!business.website || analyzingId === business.id} onClick={() => onAnalyze(business)}>{analyzingId === business.id ? 'Analisando…' : 'Analisar site'}</button><button type="button" className="btn secondary sm" onClick={toggle}>{open ? 'Ocultar IA' : 'Insight IA'}</button></div></td>
+    </tr>
+    {open && <tr><td colSpan={11}>
+      {insight ? <div className="leadCard" style={{ maxWidth: 640 }}>
+        <div className="tableHint">Gerado por {insight.model === 'demo' ? 'modo demo (sem OPENAI_API_KEY)' : insight.model} em {new Date(insight.generatedAt).toLocaleString('pt-BR')} {insight.approved && <Status value="ONLINE" />}</div>
+        <b>Análise</b><p style={{ margin: '4px 0 10px' }}>{insight.summary}</p>
+        <b>Sugestão de abordagem</b><p style={{ margin: '4px 0 10px' }}>{insight.suggestedPitch}</p>
+        <div className="rowActions"><button disabled={busy} className="btn secondary sm" onClick={generate}>Gerar novamente</button>{!insight.approved && <button disabled={busy} className="btn sm" onClick={approve}>Aprovar sugestão</button>}</div>
+      </div> : <Empty>Nenhum insight gerado ainda para esta empresa. <button disabled={busy} className="btn sm" style={{ marginLeft: 8 }} onClick={generate}>{busy ? 'Gerando…' : 'Gerar insight IA'}</button></Empty>}
+    </td></tr>}
+  </>;
+}
+
 export default function Businesses() {
   const [data, setData] = useState<any>({ items: [], total: 0 });
   const [options, setOptions] = useState<any>({ locations: [], categories: [], siteStatuses: [], whatsappStatuses: [] });
@@ -30,6 +67,9 @@ export default function Businesses() {
   const [exportBusy, setExportBusy] = useState('');
   const [analyzingId, setAnalyzingId] = useState('');
   const [error, setError] = useState('');
+  const [segmentGoal, setSegmentGoal] = useState('');
+  const [segmentSuggestion, setSegmentSuggestion] = useState<any>(null);
+  const [segmentBusy, setSegmentBusy] = useState(false);
   const cities = useMemo(() => options.locations.filter((location: any) => !filters.state || location.state === filters.state), [options.locations, filters.state]);
   const states = useMemo(() => Array.from(new Set<string>(options.locations.map((location: any) => location.state))), [options.locations]);
 
@@ -66,6 +106,27 @@ export default function Businesses() {
     finally { setExportBusy(''); }
   }
 
+  async function suggestSegment() {
+    setSegmentBusy(true); setError('');
+    try { setSegmentSuggestion(await api('segments/suggest', { method: 'POST', body: JSON.stringify({ goal: segmentGoal }) })); }
+    catch (requestError: any) { setError(requestError.message ?? 'Falha ao sugerir segmento'); }
+    finally { setSegmentBusy(false); }
+  }
+  function applySuggestedFilters() {
+    const f = segmentSuggestion?.filters ?? {};
+    setFilters(current => ({
+      ...current,
+      ...(f.city !== undefined ? { city: f.city } : {}),
+      ...(f.category !== undefined ? { category: f.category } : {}),
+      ...(f.hasWebsite !== undefined ? { hasWebsite: String(f.hasWebsite) } : {}),
+      ...(f.siteStatus !== undefined ? { siteStatus: f.siteStatus } : {}),
+      ...(f.minScore !== undefined ? { minScore: String(f.minScore) } : {}),
+      ...(f.maxScore !== undefined ? { maxScore: String(f.maxScore) } : {}),
+      ...(f.minReviews !== undefined ? { minReviews: String(f.minReviews) } : {}),
+      ...(f.maxReviews !== undefined ? { maxReviews: String(f.maxReviews) } : {}),
+    }));
+  }
+
   async function analyze(business: any) {
     setAnalyzingId(business.id); setError('');
     try {
@@ -84,6 +145,16 @@ export default function Businesses() {
   const size = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
 
   return <Shell title="Empresas" subtitle={`${data.total ?? 0} empresas correspondem aos filtros`}>
+    <section className="card filtersCard">
+      <div className="filtersHeader"><h2 className="sectionTitle">Segmentação IA</h2></div>
+      <div className="filterGrid">
+        <label className="field filterSearch"><span>Objetivo (texto livre)</span><input className="input" placeholder="Ex: empresas sem site em Caldas Novas, ideal para oferta de criação de site" value={segmentGoal} onChange={event => setSegmentGoal(event.target.value)} /></label>
+        <div className="filterActions"><button type="button" className="btn secondary" disabled={segmentBusy || segmentGoal.trim().length < 5} onClick={suggestSegment}>{segmentBusy ? 'Sugerindo…' : 'Sugerir filtros'}</button></div>
+      </div>
+      {segmentSuggestion && <div className="tableHint" style={{ marginTop: 10 }}>
+        {segmentSuggestion.explanation} {Object.keys(segmentSuggestion.filters ?? {}).length > 0 && <button type="button" className="btn sm" style={{ marginLeft: 8 }} onClick={applySuggestedFilters}>Usar esses filtros</button>}
+      </div>}
+    </section>
     <section className="card filtersCard">
       <div className="filtersHeader"><h2 className="sectionTitle">Filtros</h2><span className={error ? 'filterError' : ''}>{error || (loading ? 'Atualizando…' : `${data.total ?? 0} resultados`)}</span></div>
       <form className="filterGrid" onSubmit={submit}>
@@ -105,7 +176,7 @@ export default function Businesses() {
       </form>
     </section>
     <div className="toolbar"><span className="spacer"/><button disabled={Boolean(exportBusy)} className="btn secondary" onClick={() => createExport('CSV')}>{exportBusy === 'CSV' ? 'Gerando CSV…' : 'Exportar CSV'}</button><button disabled={Boolean(exportBusy)} className="btn secondary" onClick={() => createExport('XLSX')}>{exportBusy === 'XLSX' ? 'Gerando XLSX…' : 'Exportar XLSX'}</button></div>
-    <section className="card">{data.items.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Empresa</th><th>Categoria</th><th>Cidade</th><th>Telefone</th><th>WhatsApp</th><th>Website Analyzer</th><th>Rating</th><th>Avaliações</th><th>Lead Score</th><th>CRM</th><th>Ação</th></tr></thead><tbody>{data.items.map((business: any) => <tr key={business.id}><td><b>{business.name}</b></td><td>{business.category}</td><td>{business.city}/{business.state}</td><td>{business.phone ?? '—'}</td><td>{business.phones?.[0]?.whatsappStatus ?? 'UNKNOWN'}</td><td><WebsiteSummary business={business} /></td><td>{business.rating ?? '—'}</td><td>{business.reviewsCount ?? 0}</td><td><b style={{ color: business.leadScore >= 60 ? 'var(--brand)' : 'inherit' }}>{business.leadScore}</b></td><td><Status value={business.leadStatus}/></td><td><button className="btn secondary sm" disabled={!business.website || analyzingId === business.id} onClick={() => analyze(business)}>{analyzingId === business.id ? 'Analisando…' : 'Analisar site'}</button></td></tr>)}</tbody></table></div> : <Empty>Nenhuma empresa corresponde aos filtros.</Empty>}</section>
+    <section className="card">{data.items.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Empresa</th><th>Categoria</th><th>Cidade</th><th>Telefone</th><th>WhatsApp</th><th>Website Analyzer</th><th>Rating</th><th>Avaliações</th><th>Lead Score</th><th>CRM</th><th>Ação</th></tr></thead><tbody>{data.items.map((business: any) => <BusinessRow key={business.id} business={business} analyzingId={analyzingId} onAnalyze={analyze} />)}</tbody></table></div> : <Empty>Nenhuma empresa corresponde aos filtros.</Empty>}</section>
     <section className="card exportHistory"><h2 className="sectionTitle">Exportações persistentes</h2>{exports.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Arquivo</th><th>Formato</th><th>Linhas</th><th>Tamanho</th><th>Status</th><th>Criado</th><th>Ação</th></tr></thead><tbody>{exports.map(item => <tr key={item.id}><td>{item.filename}</td><td>{item.format}</td><td>{item.rowCount}</td><td>{size(item.sizeBytes)}</td><td><Status value={item.status} /></td><td>{new Date(item.createdAt).toLocaleString('pt-BR')}</td><td>{item.status === 'COMPLETED' && <button className="btn secondary sm" onClick={() => download(`exports/${item.id}/download`, item.filename)}>Baixar novamente</button>}</td></tr>)}</tbody></table></div> : <Empty>Nenhuma exportação gerada.</Empty>}</section>
   </Shell>;
 }

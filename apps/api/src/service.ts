@@ -7,9 +7,9 @@ import { mkdir, rename, stat, unlink, writeFile } from 'fs/promises';
 import path from 'path';
 import { createWebsiteAnalysisIntent, prisma } from '@prospector/database';
 import { enqueueRun, enqueueWebsiteAnalysis, prospectingQueue, campaignQueue, websiteAnalysisQueue } from '@prospector/queues';
-import { detectOptOutIntent, verifyWhatsAppWebhookSignature, websiteAnalysisVersion, WhatsAppTemplateProvider } from '@prospector/integrations';
+import { detectOptOutIntent, OpenAiInsightProvider, verifyWhatsAppWebhookSignature, websiteAnalysisVersion, WhatsAppTemplateProvider } from '@prospector/integrations';
 import { heartbeatStatus, nextScheduleOccurrence, normalizePhone, parseAutopilotConfig, validateCronExpression, validateTimezone } from '@prospector/shared';
-import { autopilotConfigSchema, autopilotTargetSchema, businessFilterSchema, createRunSchema, createScheduleSchema, messageTemplateSchema } from '@prospector/validation';
+import { autopilotConfigSchema, autopilotTargetSchema, businessFilterSchema, createRunSchema, createScheduleSchema, messageTemplateSchema, segmentGoalSchema } from '@prospector/validation';
 import { businessExportValues, exportColumns, persistentExportFilename, renderBusinessesCsv, safeExportPath } from './exports';
 import { directorySize, emptyQueueCounts, mergeQueueCounts, normalizeQueueCounts } from './operations';
 
@@ -55,10 +55,26 @@ export class ApiService {
   async runAction(id:string,action:string){const run=await prisma.prospectingRun.findUnique({where:{id}});if(!run)throw new NotFoundException();if(action==='cancel'){const [cancelled]=await prisma.$transaction([prisma.prospectingRun.update({where:{id},data:{status:'CANCELLED',finishedAt:new Date()}}),prisma.jobRecord.updateMany({where:{runId:id,state:{in:['WAITING','ACTIVE','RECOVERING']}},data:{state:'CANCELLED',completedAt:new Date()}})]);return cancelled}if(action==='retry'){await prisma.prospectingRun.update({where:{id},data:{status:'RECOVERING',errorMessage:null,finishedAt:null}});await enqueueRun(id);return{ok:true}};throw new BadRequestException('Ação inválida')}
   async businesses(raw:any){const parsed=businessFilterSchema.safeParse(raw);if(!parsed.success)throw new BadRequestException({message:'Filtros inválidos',issues:parsed.error.issues.map(issue=>({field:issue.path.join('.'),message:issue.message}))});const q=parsed.data;const where=businessWhere(q);const [items,total]=await prisma.$transaction([prisma.business.findMany({where,include:{phones:true},orderBy:[{leadScore:'desc'},{updatedAt:'desc'}],skip:(q.page-1)*q.pageSize,take:q.pageSize}),prisma.business.count({where})]);return{items,total,page:q.page,pageSize:q.pageSize}}
   async businessFilterOptions(){const [locations,categories]=await Promise.all([prisma.business.findMany({select:{city:true,state:true},distinct:['city','state'],orderBy:[{state:'asc'},{city:'asc'}]}),prisma.business.findMany({select:{category:true},distinct:['category'],orderBy:{category:'asc'}})]);return{locations,categories:categories.map(item=>item.category),siteStatuses:['NO_WEBSITE','POOR','AVERAGE','GOOD','UNKNOWN'],whatsappStatuses:['UNKNOWN','AVAILABLE','NOT_AVAILABLE','INVALID']}}
-  async business(id:string){const item=await prisma.business.findUnique({where:{id},include:{phones:true,snapshots:{orderBy:{capturedAt:'desc'},take:20},websiteAnalyses:{orderBy:{createdAt:'desc'},take:20},leadEvents:{orderBy:{createdAt:'desc'}}}});if(!item)throw new NotFoundException();return item}
+  async business(id:string){const item=await prisma.business.findUnique({where:{id},include:{phones:true,snapshots:{orderBy:{capturedAt:'desc'},take:20},websiteAnalyses:{orderBy:{createdAt:'desc'},take:20},leadEvents:{orderBy:{createdAt:'desc'}},insight:true}});if(!item)throw new NotFoundException();return item}
   async analyzeBusinessWebsite(id:string){const business=await prisma.business.findUnique({where:{id}});if(!business)throw new NotFoundException('Empresa não encontrada');if(!business.website)throw new BadRequestException('Empresa não possui website');const version=websiteAnalysisVersion(business.website);const intent=await createWebsiteAnalysisIntent({businessId:id,url:business.website,version,force:true});const job=await enqueueWebsiteAnalysis(intent.analysis.id);await prisma.jobRecord.update({where:{idempotencyKey:intent.analysis.idempotencyKey},data:{bullJobId:job.id}});return intent.analysis}
   async websiteAnalyses(id:string){if(!await prisma.business.findUnique({where:{id},select:{id:true}}))throw new NotFoundException('Empresa não encontrada');return prisma.websiteAnalysis.findMany({where:{businessId:id},orderBy:{createdAt:'desc'},take:50})}
   async leadStatus(id:string,body:any){const current=await prisma.business.findUnique({where:{id}});if(!current)throw new NotFoundException();return prisma.$transaction(async tx=>{const updated=await tx.business.update({where:{id},data:{leadStatus:body.status}});await tx.leadEvent.create({data:{businessId:id,fromStatus:current.leadStatus,toStatus:body.status,note:body.note}});if(body.status==='DO_NOT_CONTACT'&&current.normalizedPhone)await tx.contactSuppression.upsert({where:{normalizedPhone:current.normalizedPhone},update:{reason:body.note??'Opt-out'},create:{businessId:id,normalizedPhone:current.normalizedPhone,reason:body.note??'Opt-out'}});return updated})}
+  getLeadInsight(id:string){return prisma.businessInsight.findUnique({where:{businessId:id}})}
+  async generateLeadInsight(id:string){
+    const business=await prisma.business.findUnique({where:{id}});
+    if(!business)throw new NotFoundException('Empresa não encontrada');
+    const result=await new OpenAiInsightProvider().generateLeadInsight({name:business.name,category:business.category,city:business.city,state:business.state,siteStatus:business.siteStatus,hasWebsite:Boolean(business.website),reviewsCount:business.reviewsCount??0,rating:business.rating,leadScore:business.leadScore,technologies:(business.technologies as string[])??[]});
+    return prisma.businessInsight.upsert({where:{businessId:id},update:{summary:result.summary,suggestedPitch:result.suggestedPitch,model:result.model,approved:false,generatedAt:new Date()},create:{businessId:id,summary:result.summary,suggestedPitch:result.suggestedPitch,model:result.model}});
+  }
+  async approveInsight(id:string){const current=await prisma.businessInsight.findUnique({where:{businessId:id}});if(!current)throw new NotFoundException('Nenhum insight gerado para essa empresa ainda');return prisma.businessInsight.update({where:{businessId:id},data:{approved:true}})}
+  async suggestSegment(raw:any){
+    const parsed=segmentGoalSchema.parse(raw);
+    const result=await new OpenAiInsightProvider().suggestSegment(parsed.goal);
+    const allowedSiteStatuses=['NO_WEBSITE','POOR','AVERAGE','GOOD','UNKNOWN'];
+    const filters={...result.filters};
+    if(filters.siteStatus&&!allowedSiteStatuses.includes(filters.siteStatus))delete filters.siteStatus;
+    return{filters,explanation:result.explanation};
+  }
   schedules(){return prisma.schedule.findMany({orderBy:{createdAt:'desc'}})}
   async createSchedule(raw:any){const body=this.parseSchedule(raw);return prisma.schedule.create({data:this.normalizeSchedule(body) as any})}
   async updateSchedule(id:string,raw:any){const current=await prisma.schedule.findUnique({where:{id}});if(!current)throw new NotFoundException('Agendamento não encontrado');const body=this.parseSchedule({...current,...raw});return prisma.schedule.update({where:{id},data:this.normalizeSchedule(body) as any})}
