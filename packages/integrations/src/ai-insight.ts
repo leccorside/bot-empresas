@@ -14,7 +14,16 @@ export function demoLeadInsight(input: LeadInsightInput): LeadInsightResult {
   const suggestedPitch = !input.hasWebsite
     ? `Olá! Notei que a ${input.name} ainda não tem um site — muitos clientes de ${input.category.toLowerCase()} em ${input.city} já buscam online antes de decidir. Posso te mostrar como resolver isso rapidamente?`
     : `Olá! Analisando negócios de ${input.category.toLowerCase()} em ${input.city}, vi uma oportunidade de fortalecer a presença digital da ${input.name}. Tem 5 minutos para eu te mostrar?`;
-  return { summary, suggestedPitch, model: 'demo' };
+  const reasons: string[] = [];
+  let adjustment = 0;
+  if (!input.hasWebsite) { adjustment += 15; reasons.push('ausência de site'); }
+  if ((input.reviewsCount ?? 0) === 0) { adjustment += 10; reasons.push('nenhuma avaliação no Google'); }
+  if (input.rating != null && input.rating < 3) { adjustment += 10; reasons.push('avaliação média baixa'); }
+  const suggestedScore = Math.max(0, Math.min(100, input.leadScore + adjustment));
+  const scoreJustification = reasons.length
+    ? `Modo demo: ajuste de +${adjustment} sugerido por ${reasons.join(', ')}.`
+    : 'Modo demo: score atual já reflete bem os sinais coletados, sem ajuste sugerido.';
+  return { summary, suggestedPitch, model: 'demo', suggestedScore, scoreJustification };
 }
 
 export function demoSegmentSuggestion(goal: string): SegmentSuggestion {

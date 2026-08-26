@@ -341,6 +341,9 @@ model BusinessInsight {
   suggestedPitch String
   model String
   approved Boolean @default(false)
+  suggestedScore Int?
+  scoreJustification String?
+  scoreApplied Boolean @default(false)
   generatedAt DateTime @default(now())
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

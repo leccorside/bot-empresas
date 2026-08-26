@@ -82,6 +82,26 @@ describe('funções puras de modo demo', () => {
     expect(first.summary.toLowerCase()).toContain('não possui site');
   });
 
+  it('demoLeadInsight sugere ajuste de score para sinais negativos (sem site, sem avaliações)', () => {
+    const result = demoLeadInsight(businessInput); // leadScore:65, hasWebsite:false, reviewsCount:0, rating:null
+    expect(result.suggestedScore).toBe(90); // 65 + 15 (sem site) + 10 (sem avaliações)
+    expect(result.scoreJustification).toContain('ausência de site');
+    expect(result.scoreJustification).toContain('nenhuma avaliação');
+  });
+
+  it('demoLeadInsight não sugere ajuste quando não há sinais negativos', () => {
+    const healthy = { ...businessInput, hasWebsite: true, siteStatus: 'GOOD', reviewsCount: 50, rating: 4.5, leadScore: 10 };
+    const result = demoLeadInsight(healthy);
+    expect(result.suggestedScore).toBe(10);
+    expect(result.scoreJustification).toContain('sem ajuste sugerido');
+  });
+
+  it('demoLeadInsight satura o score sugerido em 100', () => {
+    const nearMax = { ...businessInput, leadScore: 95, rating: 2 };
+    const result = demoLeadInsight(nearMax);
+    expect(result.suggestedScore).toBe(100);
+  });
+
   it('demoSegmentSuggestion reconhece palavras-chave comuns', () => {
     expect(demoSegmentSuggestion('quero empresas sem site em Caldas Novas').filters).toMatchObject({ hasWebsite: false });
     expect(demoSegmentSuggestion('leads com score alto e melhores oportunidades').filters).toMatchObject({ minScore: 60 });

@@ -21,6 +21,7 @@ export class ApiController {
   @Get('businesses/:id/insight') getLeadInsight(@Param('id') id:string){return this.service.getLeadInsight(id)}
   @Post('businesses/:id/insight') generateLeadInsight(@Param('id') id:string){return this.service.generateLeadInsight(id)}
   @Post('businesses/:id/insight/approve') approveInsight(@Param('id') id:string){return this.service.approveInsight(id)}
+  @Post('businesses/:id/insight/apply-score') applyInsightScore(@Param('id') id:string){return this.service.applyInsightScore(id)}
   @Post('segments/suggest') suggestSegment(@Body() body:any){return this.service.suggestSegment(body)}
   @Get('insights/batch') insightBatches(){return this.service.insightBatches()}
   @Post('insights/batch') createInsightBatch(@Body() body:any){return this.service.createInsightBatch(body)}

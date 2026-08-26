@@ -8,7 +8,7 @@ import path from 'path';
 import { createWebsiteAnalysisIntent, prisma } from '@prospector/database';
 import { enqueueInsightBatch, enqueueRun, enqueueWebsiteAnalysis, insightBatchQueue, prospectingQueue, campaignQueue, websiteAnalysisQueue } from '@prospector/queues';
 import { AiInsightProvider, detectOptOutIntent, verifyWhatsAppWebhookSignature, websiteAnalysisVersion, WhatsAppTemplateProvider } from '@prospector/integrations';
-import { businessWhere, heartbeatStatus, nextScheduleOccurrence, normalizePhone, parseAutopilotConfig, validateCronExpression, validateTimezone } from '@prospector/shared';
+import { businessWhere, heartbeatStatus, nextScheduleOccurrence, normalizePhone, parseAutopilotConfig, scoreClassFor, validateCronExpression, validateTimezone } from '@prospector/shared';
 import { autopilotConfigSchema, autopilotTargetSchema, businessFilterSchema, createRunSchema, createScheduleSchema, messageTemplateSchema, segmentGoalSchema } from '@prospector/validation';
 import { businessExportValues, exportColumns, persistentExportFilename, renderBusinessesCsv, safeExportPath } from './exports';
 import { directorySize, emptyQueueCounts, mergeQueueCounts, normalizeQueueCounts } from './operations';
@@ -62,9 +62,20 @@ export class ApiService {
     const business=await prisma.business.findUnique({where:{id}});
     if(!business)throw new NotFoundException('Empresa não encontrada');
     const result=await new AiInsightProvider().generateLeadInsight({name:business.name,category:business.category,city:business.city,state:business.state,siteStatus:business.siteStatus,hasWebsite:Boolean(business.website),reviewsCount:business.reviewsCount??0,rating:business.rating,leadScore:business.leadScore,technologies:(business.technologies as string[])??[]});
-    return prisma.businessInsight.upsert({where:{businessId:id},update:{summary:result.summary,suggestedPitch:result.suggestedPitch,model:result.model,approved:false,generatedAt:new Date()},create:{businessId:id,summary:result.summary,suggestedPitch:result.suggestedPitch,model:result.model}});
+    return prisma.businessInsight.upsert({where:{businessId:id},update:{summary:result.summary,suggestedPitch:result.suggestedPitch,model:result.model,approved:false,suggestedScore:result.suggestedScore,scoreJustification:result.scoreJustification,scoreApplied:false,generatedAt:new Date()},create:{businessId:id,summary:result.summary,suggestedPitch:result.suggestedPitch,model:result.model,suggestedScore:result.suggestedScore,scoreJustification:result.scoreJustification}});
   }
   async approveInsight(id:string){const current=await prisma.businessInsight.findUnique({where:{businessId:id}});if(!current)throw new NotFoundException('Nenhum insight gerado para essa empresa ainda');return prisma.businessInsight.update({where:{businessId:id},data:{approved:true}})}
+  async applyInsightScore(id:string){
+    const insight=await prisma.businessInsight.findUnique({where:{businessId:id}});
+    if(!insight)throw new NotFoundException('Nenhum insight gerado para essa empresa ainda');
+    if(insight.suggestedScore==null)throw new BadRequestException('Este insight não tem um score sugerido pela IA');
+    const score=Math.max(0,Math.min(100,insight.suggestedScore));
+    await prisma.$transaction([
+      prisma.business.update({where:{id},data:{leadScore:score,scoreClass:scoreClassFor(score)}}),
+      prisma.businessInsight.update({where:{businessId:id},data:{scoreApplied:true}}),
+    ]);
+    return prisma.business.findUnique({where:{id}});
+  }
   async suggestSegment(raw:any){
     const parsed=segmentGoalSchema.parse(raw);
     const result=await new AiInsightProvider().suggestSegment(parsed.goal);

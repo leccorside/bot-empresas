@@ -183,6 +183,9 @@ export function phoneType(value?: string | null): 'MOBILE' | 'LANDLINE' | 'UNKNO
   return local.length === 11 && local[2] === '9' ? 'MOBILE' : local.length === 10 ? 'LANDLINE' : 'UNKNOWN';
 }
 export type LeadScoreInput = { website?: string | null; siteStatus?: string; reviewsCount?: number | null; whatsapp?: boolean; phone?: string | null; siteResponseMs?: number | null; hasHttps?: boolean | null; performanceScore?: number | null };
+export function scoreClassFor(score: number) {
+  return score >= 80 ? 'VERY_HIGH' : score >= 60 ? 'HIGH' : score >= 30 ? 'MEDIUM' : 'LOW';
+}
 export function calculateLeadScore(input: LeadScoreInput) {
   let raw = 0;
   if (!input.website) raw += 40; else if (input.siteStatus === 'POOR') raw += 25;
@@ -193,8 +196,7 @@ export function calculateLeadScore(input: LeadScoreInput) {
   if (input.website && input.hasHttps === false) raw += 10;
   if (input.performanceScore != null && input.performanceScore < 50) raw += 15;
   const score = Math.min(100, raw);
-  const scoreClass = score >= 80 ? 'VERY_HIGH' : score >= 60 ? 'HIGH' : score >= 30 ? 'MEDIUM' : 'LOW';
-  return { score, scoreClass } as const;
+  return { score, scoreClass: scoreClassFor(score) } as const;
 }
 export const terminalRunStates = ['COMPLETED', 'FAILED', 'CANCELLED'] as const;
 

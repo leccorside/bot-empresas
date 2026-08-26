@@ -19,16 +19,27 @@ describe('GeminiInsightProvider — insight de lead', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('com chave, consulta a API oficial do Gemini e retorna o JSON estruturado', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(geminiResponse({ summary: 'Resumo gerado', suggestedPitch: 'Abordagem sugerida' }));
+  it('com chave, consulta a API oficial do Gemini e retorna o JSON estruturado (incluindo score sugerido)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(geminiResponse({ summary: 'Resumo gerado', suggestedPitch: 'Abordagem sugerida', suggestedScore: 40, scoreJustification: 'Justificativa gerada' }));
     vi.stubGlobal('fetch', fetchMock);
     const provider = new GeminiInsightProvider('fake-key', 'gemini-3.6-flash');
     expect(provider.isConfigured()).toBe(true);
     const result = await provider.generateLeadInsight(businessInput);
-    expect(result).toEqual({ summary: 'Resumo gerado', suggestedPitch: 'Abordagem sugerida', model: 'gemini-3.6-flash' });
+    expect(result).toEqual({ summary: 'Resumo gerado', suggestedPitch: 'Abordagem sugerida', suggestedScore: 40, scoreJustification: 'Justificativa gerada', model: 'gemini-3.6-flash' });
     const [url, options] = fetchMock.mock.calls[0];
     expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=fake-key');
     expect(JSON.parse(options.body)).toMatchObject({ generationConfig: { responseMimeType: 'application/json' } });
+  });
+
+  it('sem suggestedScore na resposta, usa o leadScore atual como fallback; negativo satura em 0', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(geminiResponse({ summary: 'x', suggestedPitch: 'y' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new GeminiInsightProvider('fake-key', 'gemini-3.6-flash');
+    await expect(provider.generateLeadInsight(businessInput)).resolves.toMatchObject({ suggestedScore: businessInput.leadScore, scoreJustification: '' });
+
+    const negative = vi.fn().mockResolvedValue(geminiResponse({ summary: 'x', suggestedPitch: 'y', suggestedScore: -20 }));
+    vi.stubGlobal('fetch', negative);
+    await expect(provider.generateLeadInsight(businessInput)).resolves.toMatchObject({ suggestedScore: 0 });
   });
 
   it('usa o modelo default quando GEMINI_MODEL não é informado', async () => {

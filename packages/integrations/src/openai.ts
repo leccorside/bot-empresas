@@ -1,12 +1,18 @@
 export type LeadInsightInput = { name: string; category: string; city: string; state: string; siteStatus: string; hasWebsite: boolean; reviewsCount: number; rating: number | null; leadScore: number; technologies: string[] };
-export type LeadInsightResult = { summary: string; suggestedPitch: string; model: string };
+export type LeadInsightResult = { summary: string; suggestedPitch: string; model: string; suggestedScore: number; scoreJustification: string };
 export type SegmentFilters = { city?: string; category?: string; hasWebsite?: boolean; siteStatus?: string; minScore?: number; maxScore?: number; minReviews?: number; maxReviews?: number };
 export type SegmentSuggestion = { filters: SegmentFilters; explanation: string };
 
-export const leadInsightSystemPrompt = 'Você é um analista de vendas B2B. Analise os dados fornecidos sobre uma empresa prospectada e responda SOMENTE em JSON com os campos "summary" (2-3 frases em português do Brasil sobre a oportunidade comercial) e "suggestedPitch" (1-2 frases de abordagem inicial personalizada, natural, sem soar genérica). Nunca invente dados que não foram fornecidos.';
+export const leadInsightSystemPrompt = 'Você é um analista de vendas B2B. Analise os dados fornecidos sobre uma empresa prospectada, incluindo o lead score atual (calculado por regras fixas), e responda SOMENTE em JSON com os campos "summary" (2-3 frases em português do Brasil sobre a oportunidade comercial), "suggestedPitch" (1-2 frases de abordagem inicial personalizada, natural, sem soar genérica), "suggestedScore" (número inteiro de 0 a 100: sua reavaliação do lead score, ajustando o score atual para cima ou para baixo conforme sua análise qualitativa dos dados) e "scoreJustification" (1 frase curta em português explicando por que sugere esse ajuste em relação ao score atual). Nunca invente dados que não foram fornecidos.';
 export const segmentSuggestionSystemPrompt = 'Você ajuda a montar segmentos de prospecção B2B a partir de um objetivo em texto livre. Responda SOMENTE em JSON com "filters" (objeto usando apenas as chaves city, category, hasWebsite [booleano], siteStatus [um de NO_WEBSITE, POOR, AVERAGE, GOOD, UNKNOWN], minScore, maxScore, minReviews, maxReviews — omita as chaves que não se aplicam) e "explanation" (1 frase em português explicando o filtro). Nunca invente cidade ou categoria que não estejam implícitas no texto.';
 
 const CHAT_MODEL = 'gpt-4o-mini';
+
+export function normalizeLeadInsightResult(data: any, fallbackScore: number, model: string): LeadInsightResult {
+  const rawScore = Number(data?.suggestedScore);
+  const suggestedScore = Number.isFinite(rawScore) ? Math.max(0, Math.min(100, Math.round(rawScore))) : fallbackScore;
+  return { summary: String(data?.summary ?? '').trim(), suggestedPitch: String(data?.suggestedPitch ?? '').trim(), suggestedScore, scoreJustification: String(data?.scoreJustification ?? '').trim(), model };
+}
 
 export class OpenAiInsightProvider {
   private readonly key: string | undefined;
@@ -16,7 +22,7 @@ export class OpenAiInsightProvider {
   async generateLeadInsight(input: LeadInsightInput): Promise<LeadInsightResult> {
     if (!this.key) throw new Error('Chave da OpenAI não configurada');
     const data = await this.chat(leadInsightSystemPrompt, JSON.stringify(input));
-    return { summary: String(data.summary ?? '').trim(), suggestedPitch: String(data.suggestedPitch ?? '').trim(), model: CHAT_MODEL };
+    return normalizeLeadInsightResult(data, input.leadScore, CHAT_MODEL);
   }
 
   async suggestSegment(goal: string): Promise<SegmentSuggestion> {

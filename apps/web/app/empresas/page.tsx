@@ -28,7 +28,7 @@ function WebsiteSummary({ business }: { business: any }) {
   return <div className="websiteSummary"><div><a href={safeUrl} target="_blank" rel="noreferrer">Abrir site</a> <Status value={business.siteStatus} /></div><small>{business.siteHttpStatus ?? 'HTTP —'} · {business.siteResponseMs != null ? `${business.siteResponseMs} ms` : 'tempo —'} · {business.hasHttps ? 'HTTPS' : 'sem HTTPS'} · {business.siteSslValid ? 'SSL válido' : 'SSL —'} · {business.hasViewport ? 'responsivo' : 'viewport —'} · {business.performanceScore != null ? `PageSpeed ${business.performanceScore}` : 'PageSpeed —'}</small>{technologies && <small title={technologies}>{technologies}</small>}</div>;
 }
 
-function BusinessRow({ business, analyzingId, onAnalyze }: { business: any; analyzingId: string; onAnalyze: (business: any) => void }) {
+function BusinessRow({ business, analyzingId, onAnalyze, onScoreApplied }: { business: any; analyzingId: string; onAnalyze: (business: any) => void; onScoreApplied: () => void }) {
   const [insight, setInsight] = useState<any>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -48,6 +48,15 @@ function BusinessRow({ business, analyzingId, onAnalyze }: { business: any; anal
     try { setInsight(await api(`businesses/${business.id}/insight/approve`, { method: 'POST' })); }
     finally { setBusy(false); }
   }
+  async function applyScore() {
+    if (!confirm(`Aplicar o score sugerido pela IA (${insight.suggestedScore}) a esta empresa, substituindo o score atual (${business.leadScore})?`)) return;
+    setBusy(true);
+    try {
+      await api(`businesses/${business.id}/insight/apply-score`, { method: 'POST' });
+      setInsight((current: any) => ({ ...current, scoreApplied: true }));
+      onScoreApplied();
+    } finally { setBusy(false); }
+  }
 
   return <>
     <tr>
@@ -60,6 +69,11 @@ function BusinessRow({ business, analyzingId, onAnalyze }: { business: any; anal
         <b>Análise</b><p style={{ margin: '4px 0 10px' }}>{insight.summary}</p>
         <b>Sugestão de abordagem</b><p style={{ margin: '4px 0 10px' }}>{insight.suggestedPitch}</p>
         <div className="rowActions"><button disabled={busy} className="btn secondary sm" onClick={generate}>Gerar novamente</button>{!insight.approved && <button disabled={busy} className="btn sm" onClick={approve}>Aprovar sugestão</button>}</div>
+        {insight.scoreJustification && <>
+          <b style={{ display: 'block', marginTop: 12 }}>Classificação assistida por IA</b>
+          <p style={{ margin: '4px 0 10px' }}>Score atual: <b>{business.leadScore}</b> · Score sugerido pela IA: <b style={{ color: 'var(--brand)' }}>{insight.suggestedScore}</b><br /><span className="tableHint">{insight.scoreJustification}</span></p>
+          <div className="rowActions">{insight.scoreApplied ? <span className="status COMPLETED">Score aplicado</span> : <button disabled={busy} className="btn sm" onClick={applyScore}>Aplicar score sugerido</button>}</div>
+        </>}
       </div> : <Empty>Nenhum insight gerado ainda para esta empresa. <button disabled={busy} className="btn sm" style={{ marginLeft: 8 }} onClick={generate}>{busy ? 'Gerando…' : 'Gerar insight IA'}</button></Empty>}
     </td></tr>}
   </>;
@@ -240,7 +254,7 @@ export default function Businesses() {
       {['WAITING', 'ACTIVE', 'RECOVERING'].includes(batch.status) && <div className="rowActions" style={{ marginTop: 8 }}><button className="btn secondary sm" onClick={cancelInsightBatch}>Cancelar lote</button></div>}
       {batch.status === 'COMPLETED' && <div className="rowActions" style={{ marginTop: 8 }}><button className="btn secondary sm" onClick={() => load()}>Atualizar lista</button></div>}
     </section>}
-    <section className="card">{data.items.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Empresa</th><th>Categoria</th><th>Cidade</th><th>Telefone</th><th>WhatsApp</th><th>Website Analyzer</th><th>Rating</th><th>Avaliações</th><th>Lead Score</th><th>CRM</th><th>Ação</th></tr></thead><tbody>{data.items.map((business: any) => <BusinessRow key={business.id} business={business} analyzingId={analyzingId} onAnalyze={analyze} />)}</tbody></table></div> : <Empty>Nenhuma empresa corresponde aos filtros.</Empty>}</section>
+    <section className="card">{data.items.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Empresa</th><th>Categoria</th><th>Cidade</th><th>Telefone</th><th>WhatsApp</th><th>Website Analyzer</th><th>Rating</th><th>Avaliações</th><th>Lead Score</th><th>CRM</th><th>Ação</th></tr></thead><tbody>{data.items.map((business: any) => <BusinessRow key={business.id} business={business} analyzingId={analyzingId} onAnalyze={analyze} onScoreApplied={() => load()} />)}</tbody></table></div> : <Empty>Nenhuma empresa corresponde aos filtros.</Empty>}</section>
     <section className="card exportHistory"><h2 className="sectionTitle">Exportações persistentes</h2>{exports.length ? <div className="tableWrap"><table className="table"><thead><tr><th>Arquivo</th><th>Formato</th><th>Linhas</th><th>Tamanho</th><th>Status</th><th>Criado</th><th>Ação</th></tr></thead><tbody>{exports.map(item => <tr key={item.id}><td>{item.filename}</td><td>{item.format}</td><td>{item.rowCount}</td><td>{size(item.sizeBytes)}</td><td><Status value={item.status} /></td><td>{new Date(item.createdAt).toLocaleString('pt-BR')}</td><td>{item.status === 'COMPLETED' && <button className="btn secondary sm" onClick={() => download(`exports/${item.id}/download`, item.filename)}>Baixar novamente</button>}</td></tr>)}</tbody></table></div> : <Empty>Nenhuma exportação gerada.</Empty>}</section>
     {campaignMessage && <div className="toast">{campaignMessage}</div>}
   </Shell>;

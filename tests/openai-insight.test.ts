@@ -15,17 +15,28 @@ describe('OpenAiInsightProvider — insight de lead', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('com chave, consulta a API oficial da OpenAI e retorna o JSON estruturado', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ summary: 'Resumo gerado', suggestedPitch: 'Abordagem sugerida' }) } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+  it('com chave, consulta a API oficial da OpenAI e retorna o JSON estruturado (incluindo score sugerido)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ summary: 'Resumo gerado', suggestedPitch: 'Abordagem sugerida', suggestedScore: 82, scoreJustification: 'Justificativa gerada' }) } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     vi.stubGlobal('fetch', fetchMock);
     const provider = new OpenAiInsightProvider('fake-key');
     expect(provider.isConfigured()).toBe(true);
     const result = await provider.generateLeadInsight(businessInput);
-    expect(result).toEqual({ summary: 'Resumo gerado', suggestedPitch: 'Abordagem sugerida', model: 'gpt-4o-mini' });
+    expect(result).toEqual({ summary: 'Resumo gerado', suggestedPitch: 'Abordagem sugerida', suggestedScore: 82, scoreJustification: 'Justificativa gerada', model: 'gpt-4o-mini' });
     const [url, options] = fetchMock.mock.calls[0];
     expect(url).toBe('https://api.openai.com/v1/chat/completions');
     expect(options.headers.Authorization).toBe('Bearer fake-key');
     expect(JSON.parse(options.body)).toMatchObject({ model: 'gpt-4o-mini', response_format: { type: 'json_object' } });
+  });
+
+  it('sem suggestedScore na resposta, usa o leadScore atual como fallback; fora de 0-100, satura', async () => {
+    const missing = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ summary: 'x', suggestedPitch: 'y' }) } }] }), { status: 200 }));
+    vi.stubGlobal('fetch', missing);
+    const provider = new OpenAiInsightProvider('fake-key');
+    await expect(provider.generateLeadInsight(businessInput)).resolves.toMatchObject({ suggestedScore: businessInput.leadScore, scoreJustification: '' });
+
+    const outOfRange = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ summary: 'x', suggestedPitch: 'y', suggestedScore: 150 }) } }] }), { status: 200 }));
+    vi.stubGlobal('fetch', outOfRange);
+    await expect(provider.generateLeadInsight(businessInput)).resolves.toMatchObject({ suggestedScore: 100 });
   });
 
   it('propaga erro HTTP da OpenAI', async () => {

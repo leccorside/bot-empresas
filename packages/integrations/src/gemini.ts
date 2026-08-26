@@ -1,4 +1,4 @@
-import { leadInsightSystemPrompt, segmentSuggestionSystemPrompt } from './openai.ts';
+import { leadInsightSystemPrompt, normalizeLeadInsightResult, segmentSuggestionSystemPrompt } from './openai.ts';
 import type { LeadInsightInput, LeadInsightResult, SegmentFilters, SegmentSuggestion } from './openai.ts';
 
 const GEMINI_MODEL_DEFAULT = 'gemini-3.6-flash';
@@ -12,7 +12,7 @@ export class GeminiInsightProvider {
   async generateLeadInsight(input: LeadInsightInput): Promise<LeadInsightResult> {
     if (!this.key) throw new Error('Chave do Gemini não configurada');
     const data = await this.generate(leadInsightSystemPrompt, JSON.stringify(input));
-    return { summary: String(data.summary ?? '').trim(), suggestedPitch: String(data.suggestedPitch ?? '').trim(), model: this.model };
+    return normalizeLeadInsightResult(data, input.leadScore, this.model);
   }
 
   async suggestSegment(goal: string): Promise<SegmentSuggestion> {

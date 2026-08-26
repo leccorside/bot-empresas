@@ -205,7 +205,7 @@ async function processInsightBatch(job:Job<{batchId:string}>){
       if(current?.status==='CANCELLED'){batchLog.warn('insight batch cancelled');return}
       try{
         const result=await provider.generateLeadInsight({name:business.name,category:business.category,city:business.city,state:business.state,siteStatus:business.siteStatus,hasWebsite:Boolean(business.website),reviewsCount:business.reviewsCount??0,rating:business.rating,leadScore:business.leadScore,technologies:(business.technologies as string[])??[]});
-        await prisma.businessInsight.upsert({where:{businessId:business.id},update:{summary:result.summary,suggestedPitch:result.suggestedPitch,model:result.model,approved:false,generatedAt:new Date()},create:{businessId:business.id,summary:result.summary,suggestedPitch:result.suggestedPitch,model:result.model}});
+        await prisma.businessInsight.upsert({where:{businessId:business.id},update:{summary:result.summary,suggestedPitch:result.suggestedPitch,model:result.model,approved:false,suggestedScore:result.suggestedScore,scoreJustification:result.scoreJustification,scoreApplied:false,generatedAt:new Date()},create:{businessId:business.id,summary:result.summary,suggestedPitch:result.suggestedPitch,model:result.model,suggestedScore:result.suggestedScore,scoreJustification:result.scoreJustification}});
         await prisma.insightBatch.update({where:{id:batch.id},data:{processedCount:{increment:1},generatedCount:{increment:1}}});
       }catch(error:any){
         batchLog.warn({businessId:business.id,error:error.message},'insight batch item failed');

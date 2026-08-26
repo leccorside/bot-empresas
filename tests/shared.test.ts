@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest';
-import {calculateLeadScore,heartbeatStatus,normalizePhone,normalizeText,parseAutopilotConfig,phoneType,resolveTemplateVariable,shouldDispatchAutopilot,startOfLocalDay,startOfLocalMonth,templatePlaceholders,templateVariablesMatchBody} from '../packages/shared/src';
+import {calculateLeadScore,heartbeatStatus,normalizePhone,normalizeText,parseAutopilotConfig,phoneType,resolveTemplateVariable,scoreClassFor,shouldDispatchAutopilot,startOfLocalDay,startOfLocalMonth,templatePlaceholders,templateVariablesMatchBody} from '../packages/shared/src';
 describe('normalização e score',()=>{
   it('normaliza nomes para deduplicação',()=>expect(normalizeText('Clínica São José!')).toBe('clinica sao jose'));
   it('remove espaços e símbolos repetidos',()=>expect(normalizeText('  Alfa---Beta & Cia.  ')).toBe('alfa beta cia'));
@@ -16,6 +16,16 @@ describe('normalização e score',()=>{
   it('não penaliza site saudável com muitas avaliações',()=>expect(calculateLeadScore({website:'https://example.test',siteStatus:'GOOD',reviewsCount:150,siteResponseMs:500,hasHttps:true})).toEqual({score:0,scoreClass:'LOW'}));
   it('penaliza performance PageSpeed abaixo de 50',()=>expect(calculateLeadScore({website:'https://example.test',siteStatus:'GOOD',reviewsCount:150,siteResponseMs:500,hasHttps:true,performanceScore:35})).toEqual({score:15,scoreClass:'LOW'}));
   it('não penaliza performance PageSpeed saudável',()=>expect(calculateLeadScore({website:'https://example.test',siteStatus:'GOOD',reviewsCount:150,siteResponseMs:500,hasHttps:true,performanceScore:80})).toEqual({score:0,scoreClass:'LOW'}));
+  it('scoreClassFor usa os mesmos limiares de calculateLeadScore',()=>{
+    expect(scoreClassFor(0)).toBe('LOW');
+    expect(scoreClassFor(29)).toBe('LOW');
+    expect(scoreClassFor(30)).toBe('MEDIUM');
+    expect(scoreClassFor(59)).toBe('MEDIUM');
+    expect(scoreClassFor(60)).toBe('HIGH');
+    expect(scoreClassFor(79)).toBe('HIGH');
+    expect(scoreClassFor(80)).toBe('VERY_HIGH');
+    expect(scoreClassFor(100)).toBe('VERY_HIGH');
+  });
 });
 
 describe('saúde por heartbeat',()=>{
