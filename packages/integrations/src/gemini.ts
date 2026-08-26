@@ -1,7 +1,7 @@
 import { leadInsightSystemPrompt, segmentSuggestionSystemPrompt } from './openai.ts';
 import type { LeadInsightInput, LeadInsightResult, SegmentFilters, SegmentSuggestion } from './openai.ts';
 
-const GEMINI_MODEL_DEFAULT = 'gemini-2.0-flash';
+const GEMINI_MODEL_DEFAULT = 'gemini-3.6-flash';
 
 export class GeminiInsightProvider {
   private readonly key: string | undefined;

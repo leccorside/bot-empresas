@@ -23,7 +23,7 @@ describe('AiInsightProvider — orquestração em cadeia', () => {
   });
 
   it('com só o Gemini configurado, usa o Gemini', async () => {
-    const geminiResult = { summary: 'via gemini', suggestedPitch: 'oi', model: 'gemini-2.0-flash' };
+    const geminiResult = { summary: 'via gemini', suggestedPitch: 'oi', model: 'gemini-3.6-flash' };
     const gemini = fakeGemini({ isConfigured: () => true, generateLeadInsight: vi.fn().mockResolvedValue(geminiResult) } as any);
     const openai = fakeOpenAi();
     const result = await new AiInsightProvider(gemini, openai).generateLeadInsight(businessInput);
@@ -41,7 +41,7 @@ describe('AiInsightProvider — orquestração em cadeia', () => {
   });
 
   it('com os dois configurados, prioriza o Gemini (economiza tokens da OpenAI)', async () => {
-    const geminiResult = { summary: 'via gemini', suggestedPitch: 'oi', model: 'gemini-2.0-flash' };
+    const geminiResult = { summary: 'via gemini', suggestedPitch: 'oi', model: 'gemini-3.6-flash' };
     const gemini = fakeGemini({ isConfigured: () => true, generateLeadInsight: vi.fn().mockResolvedValue(geminiResult) } as any);
     const openai = fakeOpenAi({ isConfigured: () => true, generateLeadInsight: vi.fn() } as any);
     const result = await new AiInsightProvider(gemini, openai).generateLeadInsight(businessInput);
