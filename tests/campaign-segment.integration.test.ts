@@ -61,4 +61,22 @@ describe('campanha a partir de um segmento sugerido pela IA', () => {
     expect(messages).toHaveLength(1);
     expect(messages[0].businessId).toBe(matchId);
   });
+
+  it('limita a campanha aos leads selecionados explicitamente', async () => {
+    const service = new ApiService();
+    const suffix = randomUUID();
+    const ids = [`test-selected-a-${suffix}`, `test-selected-b-${suffix}`];
+    createdBusinessIds.push(...ids);
+    for (const [index, id] of ids.entries()) await prisma.business.create({ data: { id, provider: 'TEST', providerId: `selected-${index}-${suffix}`, name: `Lead Selecionado ${index}`, normalizedName: `lead selecionado ${index}`, category: 'Teste seleção', city: 'Cidade Seleção', state: 'GO', phone: `(62) 99999-100${index}`, normalizedPhone: `+556299999100${index}` } });
+
+    const template = await service.createTemplate({ name: `template_selecao_${suffix.replace(/-/g, '_')}`, bodyText: 'Mensagem segura de teste sem variáveis' });
+    createdTemplateIds.push(template.id);
+    const approved = await service.submitTemplate(template.id);
+    const campaign = await service.createCampaign({ name: `Seleção ${suffix}`, templateId: approved.id, businessIds: [ids[0]], filters: { city: 'Cidade Seleção' } });
+    createdCampaignIds.push(campaign.id);
+
+    expect(await service.scheduleCampaign(campaign.id)).toMatchObject({ selected: 1 });
+    const messages = await prisma.campaignMessage.findMany({ where: { campaignId: campaign.id } });
+    expect(messages.map(message => message.businessId)).toEqual([ids[0]]);
+  });
 });

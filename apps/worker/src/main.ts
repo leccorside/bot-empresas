@@ -1,9 +1,9 @@
 import { Worker, Job } from 'bullmq';
 import { createWebsiteAnalysisIntent, persistDiscoveryProgress, prisma, recordServiceHeartbeat } from '@prospector/database';
 import type { ProspectingRun, SearchCell } from '@prospector/database';
-import { enqueueWebsiteAnalysis, queueOptions, QUEUES } from '@prospector/queues';
+import { campaignQueue, enqueueWebsiteAnalysis, queueOptions, QUEUES } from '@prospector/queues';
 import { AiInsightProvider, analyzeWebsite, GooglePlacesProvider, PageSpeedProvider, websiteAnalysisVersion, WhatsAppCloudProvider } from '@prospector/integrations';
-import { businessWhere, calculateLeadScore, generateGeographicGrid, logger, normalizePhone, normalizeText, phoneType, resolveTemplateVariable } from '@prospector/shared';
+import { businessWhere, calculateLeadScore, campaignDispatchDecision, generateGeographicGrid, logger, normalizePhone, normalizeText, parseCampaignDispatchPolicy, phoneType, resolveTemplateVariable } from '@prospector/shared';
 import type { GeographicBounds } from '@prospector/shared';
 
 const log=logger('worker');
@@ -181,6 +181,22 @@ async function processCampaign(job:Job<{campaignId:string}>){
       const messageLog=campaignLog.child({businessId:message.businessId,messageId:message.id});
       const suppressed=await prisma.contactSuppression.findUnique({where:{normalizedPhone:message.phone}});
       if(suppressed){await prisma.campaignMessage.update({where:{id:message.id},data:{status:'BLOCKED',errorMessage:'Contato suprimido'}});messageLog.warn('message blocked by suppression list');continue}
+      const now=new Date(),policy=parseCampaignDispatchPolicy();
+      const [sentLastHour,sentToday]=await Promise.all([
+        prisma.campaignMessage.count({where:{sentAt:{gte:new Date(now.getTime()-60*60_000)}}}),
+        prisma.campaignMessage.count({where:{sentAt:{gte:new Date(now.getTime()-24*60*60_000)}}}),
+      ]);
+      const decision=campaignDispatchDecision({now,sentLastHour,sentToday,policy});
+      if(!decision.allowed){
+        await prisma.$transaction([
+          prisma.campaign.update({where:{id:campaign.id},data:{status:'SCHEDULED',scheduledAt:decision.retryAt}}),
+          prisma.campaignMessage.updateMany({where:{campaignId:campaign.id,status:{in:['PENDING','QUEUED']}},data:{status:'QUEUED'}}),
+        ]);
+        const queue=campaignQueue();
+        try{await queue.add('send-campaign',{campaignId:campaign.id},{jobId:`campaign-${campaign.id}-${decision.retryAt.getTime()}`,delay:Math.max(1,decision.retryAt.getTime()-Date.now())})}finally{await queue.close()}
+        campaignLog.warn({reason:decision.reason,retryAt:decision.retryAt},'campaign deferred by dispatch policy');
+        return;
+      }
       const bodyParameters=templateVariables.map(variable=>resolveTemplateVariable(variable,message.business));
       const result=await messaging.send({to:message.phone,idempotencyKey:message.idempotencyKey,template:{name:template.name,language:template.language,bodyParameters}});
       await prisma.campaignMessage.update({where:{id:message.id},data:{status:'SENT',providerMessageId:result.providerMessageId,sentAt:new Date()}});

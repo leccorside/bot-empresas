@@ -51,7 +51,7 @@ function TemplatesSection({ templates, onChanged }: { templates: any[]; onChange
   </section>;
 }
 
-function LeadCard({ business, onChanged }: { business: any; onChanged: () => void }) {
+function LeadCard({ business, onChanged, selected, onSelect }: { business: any; onChanged: () => void; selected: boolean; onSelect: (id: string, checked: boolean) => void }) {
   const [history, setHistory] = useState<any[] | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -69,7 +69,7 @@ function LeadCard({ business, onChanged }: { business: any; onChanged: () => voi
   }
 
   return <div className="leadCard">
-    <b>{business.name}</b>
+    <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}><input type="checkbox" checked={selected} onChange={event => onSelect(business.id, event.target.checked)} aria-label={`Selecionar ${business.name}`} /><b>{business.name}</b></label>
     <div className="tableHint">{business.category} · {business.city}/{business.state}</div>
     <div className="tableHint">Score <b style={{ color: business.leadScore >= 60 ? 'var(--brand)' : 'inherit' }}>{business.leadScore}</b> · {business.phones?.[0]?.whatsappStatus === 'AVAILABLE' ? 'WhatsApp OK' : 'sem WhatsApp confirmado'}</div>
     <select className="input" disabled={busy} value="" onChange={e => e.target.value && changeStatus(e.target.value)}>
@@ -98,10 +98,10 @@ function CampaignRow({ campaign, onChanged }: { campaign: any; onChanged: () => 
   </>;
 }
 
-function PipelineColumn({ status, data, onChanged }: { status: string; data?: { items: any[]; total: number }; onChanged: () => void }) {
+function PipelineColumn({ status, data, onChanged, selectedIds, onSelect }: { status: string; data?: { items: any[]; total: number }; onChanged: () => void; selectedIds: Set<string>; onSelect: (id: string, checked: boolean) => void }) {
   return <div className={`pipelineColumn ${closedStatuses.includes(status) ? 'closed' : ''}`}>
     <div className="pipelineHeader"><span>{leadStatusLabels[status]}</span><span>{data?.total ?? 0}</span></div>
-    <div className="pipelineCards">{data?.items?.length ? data.items.map(business => <LeadCard key={business.id} business={business} onChanged={onChanged} />) : <div className="tableHint">Vazio</div>}</div>
+    <div className="pipelineCards">{data?.items?.length ? data.items.map(business => <LeadCard key={business.id} business={business} onChanged={onChanged} selected={selectedIds.has(business.id)} onSelect={onSelect} />) : <div className="tableHint">Vazio</div>}</div>
   </div>;
 }
 
@@ -111,6 +111,7 @@ export default function CRM() {
   const [templates, setTemplates] = useState<any[]>([]);
   const [msg, setMsg] = useState('');
   const [error, setError] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const approvedTemplates = templates.filter(template => template.status === 'APPROVED');
 
   async function loadPipeline() {
@@ -120,29 +121,36 @@ export default function CRM() {
   async function loadCampaigns() { setCampaigns(await api('campaigns')); }
   async function loadTemplates() { setTemplates(await api('templates')); }
   useEffect(() => { void loadPipeline(); void loadCampaigns(); void loadTemplates(); }, []);
+  function selectLead(id: string, checked: boolean) { setSelectedIds(current => { const next = new Set(current); checked ? next.add(id) : next.delete(id); return next; }); }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError('');
     const form = new FormData(event.currentTarget);
     try {
-      await api('campaigns', { method: 'POST', body: JSON.stringify({ name: form.get('name'), templateId: form.get('templateId'), filters: { city: form.get('city') || undefined, minScore: Number(form.get('minScore') || 0) } }) });
-      setMsg('Campanha criada em rascunho.'); void loadCampaigns();
+      const filters = Object.fromEntries(Object.entries({ city: form.get('city') || undefined, hasWebsite: form.get('hasWebsite') || undefined, whatsappStatus: form.get('whatsappStatus') || undefined, minScore: form.get('minScore') || undefined }).filter(([, value]) => value !== undefined));
+      const scheduledValue = form.get('scheduledAt');
+      await api('campaigns', { method: 'POST', body: JSON.stringify({ name: form.get('name'), templateId: form.get('templateId'), scheduledAt: scheduledValue ? new Date(String(scheduledValue)).toISOString() : undefined, businessIds: [...selectedIds], filters }) });
+      setMsg(`Campanha criada em rascunho${selectedIds.size ? ` com ${selectedIds.size} lead(s) selecionado(s)` : ''}.`); setSelectedIds(new Set()); event.currentTarget.reset(); void loadCampaigns();
     } catch (reason: any) { setError(reason.message); }
   }
 
   return <Shell title="CRM & Campanhas" subtitle="Acompanhe o funil de oportunidades e converta com segurança">
     <section className="card" style={{ marginBottom: 18 }}>
-      <h2 className="sectionTitle">Pipeline de leads</h2>
-      <div className="pipeline">{leadStatusOrder.map(status => <PipelineColumn key={status} status={status} data={pipeline[status]} onChanged={loadPipeline} />)}</div>
+      <div className="filtersHeader"><h2 className="sectionTitle">Pipeline de leads</h2><span className="tableHint">{selectedIds.size} lead(s) selecionado(s) para campanha</span></div>
+      <div className="pipeline">{leadStatusOrder.map(status => <PipelineColumn key={status} status={status} data={pipeline[status]} onChanged={loadPipeline} selectedIds={selectedIds} onSelect={selectLead} />)}</div>
     </section>
     <TemplatesSection templates={templates} onChanged={loadTemplates} />
     <section className="card" style={{ marginBottom: 18 }}>
       <div className="filtersHeader"><h2 className="sectionTitle">Criar campanha</h2>{error && <span className="filterError">{error}</span>}</div>
-      {approvedTemplates.length ? <form onSubmit={submit} className="grid" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr' }}>
-        <input className="input" name="name" placeholder="Nome da campanha" required />
-        <select className="input" name="templateId" required defaultValue=""><option value="" disabled>Template aprovado…</option>{approvedTemplates.map(template => <option key={template.id} value={template.id}>{template.name}</option>)}</select>
-        <input className="input" name="city" placeholder="Cidade (opcional)" />
-        <input className="input" name="minScore" type="number" placeholder="Score mínimo" />
+      {approvedTemplates.length ? <form onSubmit={submit} className="form">
+        <label className="field"><span>Nome</span><input className="input" name="name" placeholder="Nome da campanha" required /></label>
+        <label className="field"><span>Template</span><select className="input" name="templateId" required defaultValue=""><option value="" disabled>Template aprovado…</option>{approvedTemplates.map(template => <option key={template.id} value={template.id}>{template.name}</option>)}</select></label>
+        <label className="field"><span>Cidade</span><input className="input" name="city" placeholder="Opcional" /></label>
+        <label className="field"><span>Score mínimo</span><input className="input" name="minScore" type="number" min="0" max="100" placeholder="Opcional" /></label>
+        <label className="field"><span>Site</span><select className="input" name="hasWebsite" defaultValue=""><option value="">Qualquer</option><option value="false">Sem site</option><option value="true">Com site</option></select></label>
+        <label className="field"><span>WhatsApp</span><select className="input" name="whatsappStatus" defaultValue=""><option value="">Qualquer</option><option value="AVAILABLE">Disponível</option><option value="UNKNOWN">Não verificado</option><option value="NOT_AVAILABLE">Indisponível</option></select></label>
+        <label className="field"><span>Agendar para</span><input className="input" name="scheduledAt" type="datetime-local" /></label>
+        <div className="field"><span>Seleção explícita</span><div className="tableHint">{selectedIds.size ? `${selectedIds.size} lead(s); os filtros serão aplicados dentro dessa seleção.` : 'Sem seleção: todos os leads correspondentes aos filtros.'}</div></div>
         <button className="btn" style={{ width: 180 }}>Criar campanha</button>
       </form> : <Empty>Cadastre e aprove um template acima antes de criar uma campanha.</Empty>}
     </section>

@@ -37,7 +37,14 @@ export const messageTemplateSchema = z.object({
     ctx.addIssue({ code: 'custom', path: ['bodyText'], message: `O corpo deve conter exatamente os placeholders ${placeholders}, na ordem, correspondentes às variáveis declaradas` });
   }
 });
-const queryBoolean = z.enum(['true', 'false']).transform(value => value === 'true');
+export const createCampaignSchema = z.object({
+  name: z.string().trim().min(3).max(120),
+  templateId: z.string().trim().min(1),
+  scheduledAt: z.coerce.date().optional().nullable(),
+  businessIds: z.array(z.string().trim().min(1)).max(1000).default([]),
+  filters: z.record(z.string(), z.unknown()).default({}),
+});
+const queryBoolean = z.preprocess(value => typeof value === 'boolean' ? String(value) : value, z.enum(['true', 'false'])).transform(value => value === 'true');
 export const businessFilterSchema = z.object({
   search: z.string().trim().optional(), city: z.string().optional(), state: z.string().optional(), category: z.string().optional(),
   hasWebsite: queryBoolean.optional(), siteStatus: z.enum(['NO_WEBSITE', 'POOR', 'AVERAGE', 'GOOD', 'UNKNOWN']).optional(),

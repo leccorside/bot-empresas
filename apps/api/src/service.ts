@@ -9,7 +9,7 @@ import { createWebsiteAnalysisIntent, prisma } from '@prospector/database';
 import { enqueueInsightBatch, enqueueRun, enqueueWebsiteAnalysis, insightBatchQueue, prospectingQueue, campaignQueue, websiteAnalysisQueue } from '@prospector/queues';
 import { AiInsightProvider, detectOptOutIntent, verifyWhatsAppWebhookSignature, websiteAnalysisVersion, WhatsAppTemplateProvider } from '@prospector/integrations';
 import { businessWhere, heartbeatStatus, nextScheduleOccurrence, normalizePhone, parseAutopilotConfig, scoreClassFor, validateCronExpression, validateTimezone } from '@prospector/shared';
-import { autopilotConfigSchema, autopilotTargetSchema, businessFilterSchema, createRunSchema, createScheduleSchema, messageTemplateSchema, segmentGoalSchema } from '@prospector/validation';
+import { autopilotConfigSchema, autopilotTargetSchema, businessFilterSchema, createCampaignSchema, createRunSchema, createScheduleSchema, messageTemplateSchema, segmentGoalSchema } from '@prospector/validation';
 import { businessExportValues, exportColumns, persistentExportFilename, renderBusinessesCsv, safeExportPath } from './exports';
 import { directorySize, emptyQueueCounts, mergeQueueCounts, normalizeQueueCounts } from './operations';
 
@@ -188,10 +188,16 @@ export class ApiService {
   campaigns(){return prisma.campaign.findMany({orderBy:{createdAt:'desc'},include:{_count:{select:{messages:true}}}})}
   async campaignMessages(id:string){if(!await prisma.campaign.findUnique({where:{id},select:{id:true}}))throw new NotFoundException('Campanha não encontrada');return prisma.campaignMessage.findMany({where:{campaignId:id},orderBy:{createdAt:'desc'},include:{business:{select:{name:true}}}})}
   async createCampaign(body:any){
-    const template=body.templateId?await prisma.messageTemplate.findUnique({where:{id:body.templateId}}):null;
+    const parsed=createCampaignSchema.parse(body);
+    const cleanFilters=Object.fromEntries(Object.entries(parsed.filters).filter(([,value])=>value!==''&&value!=null));
+    const checkedFilters=businessFilterSchema.safeParse(cleanFilters);
+    if(!checkedFilters.success)throw new BadRequestException({message:'Filtros da campanha inválidos',issues:checkedFilters.error.issues});
+    const {page:_page,pageSize:_pageSize,...validatedFilters}=checkedFilters.data;
+    const filters={...validatedFilters,...(parsed.businessIds.length?{businessIds:[...new Set(parsed.businessIds)]}:{})};
+    const template=await prisma.messageTemplate.findUnique({where:{id:parsed.templateId}});
     if(!template)throw new BadRequestException('Selecione um template');
     if(template.status!=='APPROVED')throw new BadRequestException('O template selecionado ainda não foi aprovado');
-    return prisma.campaign.create({data:{name:body.name,templateId:template.id,messageTemplate:template.bodyText,filters:body.filters??{},scheduledAt:body.scheduledAt?new Date(body.scheduledAt):null}});
+    return prisma.campaign.create({data:{name:parsed.name,templateId:template.id,messageTemplate:template.bodyText,filters,scheduledAt:parsed.scheduledAt??null}});
   }
   templates(){return prisma.messageTemplate.findMany({orderBy:{createdAt:'desc'}})}
   async createTemplate(raw:any){const parsed=messageTemplateSchema.parse(raw);if(await prisma.messageTemplate.findUnique({where:{name:parsed.name}}))throw new BadRequestException('Já existe um template com esse nome');return prisma.messageTemplate.create({data:parsed})}
@@ -211,7 +217,7 @@ export class ApiService {
     const result=await new WhatsAppTemplateProvider().checkStatus(current.providerTemplateId);
     return prisma.messageTemplate.update({where:{id},data:{status:result.status,rejectionReason:result.rejectedReason??null,approvedAt:result.status==='APPROVED'?(current.approvedAt??new Date()):current.approvedAt}});
   }
-  async scheduleCampaign(id:string){const campaign=await prisma.campaign.findUnique({where:{id}});if(!campaign)throw new NotFoundException();const where={...businessWhere(campaign.filters as any),phone:{not:null},suppressions:{none:{}}};const businesses=await prisma.business.findMany({where});await prisma.$transaction(businesses.map(b=>prisma.campaignMessage.upsert({where:{campaignId_businessId:{campaignId:id,businessId:b.id}},update:{},create:{campaignId:id,businessId:b.id,phone:b.normalizedPhone??b.phone!,idempotencyKey:`campaign:${id}:${b.id}`,scheduledAt:campaign.scheduledAt??new Date()}})));await prisma.campaign.update({where:{id},data:{status:'SCHEDULED'}});const q=campaignQueue();await q.add('send-campaign',{campaignId:id},{jobId:`campaign-${id}`,delay:Math.max(0,(campaign.scheduledAt?.getTime()??Date.now())-Date.now())});await q.close();return{selected:businesses.length}}
+  async scheduleCampaign(id:string){const campaign=await prisma.campaign.findUnique({where:{id}});if(!campaign)throw new NotFoundException();const stored=(campaign.filters??{}) as any;const {businessIds,...filters}=stored;const where={...businessWhere(filters),...(Array.isArray(businessIds)&&businessIds.length?{id:{in:businessIds}}:{}),phone:{not:null},suppressions:{none:{}}};const businesses=await prisma.business.findMany({where});if(!businesses.length)throw new BadRequestException('Nenhum lead elegível encontrado para a campanha');await prisma.$transaction(businesses.map(b=>prisma.campaignMessage.upsert({where:{campaignId_businessId:{campaignId:id,businessId:b.id}},update:{},create:{campaignId:id,businessId:b.id,phone:b.normalizedPhone??b.phone!,idempotencyKey:`campaign:${id}:${b.id}`,scheduledAt:campaign.scheduledAt??new Date()}})));await prisma.campaign.update({where:{id},data:{status:'SCHEDULED'}});const q=campaignQueue();await q.add('send-campaign',{campaignId:id},{jobId:`campaign-${id}`,delay:Math.max(0,(campaign.scheduledAt?.getTime()??Date.now())-Date.now())});await q.close();return{selected:businesses.length}}
   verifyWhatsAppWebhook(query:any){
     const verifyToken=process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
     if(verifyToken&&query['hub.mode']==='subscribe'&&query['hub.verify_token']===verifyToken)return String(query['hub.challenge']??'');

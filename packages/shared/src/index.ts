@@ -239,6 +239,30 @@ export function shouldDispatchAutopilot(input: { activeCount: number; dispatched
 export function startOfLocalDay(now: Date) { const date = new Date(now); date.setHours(0, 0, 0, 0); return date; }
 export function startOfLocalMonth(now: Date) { const date = new Date(now); date.setDate(1); date.setHours(0, 0, 0, 0); return date; }
 
+export type CampaignDispatchPolicy = { messagesPerHour: number; messagesPerDay: number; allowedStartHour: number; allowedEndHour: number; timezone: string };
+export function parseCampaignDispatchPolicy(env: NodeJS.ProcessEnv = process.env): CampaignDispatchPolicy {
+  const integer = (value: string | undefined, fallback: number, min: number, max: number) => {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
+  };
+  return {
+    messagesPerHour: integer(env.CAMPAIGN_MESSAGES_PER_HOUR, 100, 1, 10_000),
+    messagesPerDay: integer(env.CAMPAIGN_MESSAGES_PER_DAY, 500, 1, 100_000),
+    allowedStartHour: integer(env.CAMPAIGN_ALLOWED_START_HOUR, 8, 0, 23),
+    allowedEndHour: integer(env.CAMPAIGN_ALLOWED_END_HOUR, 18, 0, 23),
+    timezone: env.CAMPAIGN_TIMEZONE?.trim() || 'America/Sao_Paulo',
+  };
+}
+export function campaignDispatchDecision(input: { now: Date; sentLastHour: number; sentToday: number; policy: CampaignDispatchPolicy }) {
+  const parts = zonedParts(input.now, input.policy.timezone);
+  const { allowedStartHour: start, allowedEndHour: end } = input.policy;
+  const insideWindow = start === end || (start < end ? parts.hour >= start && parts.hour < end : parts.hour >= start || parts.hour < end);
+  if (!insideWindow) return { allowed: false as const, reason: 'outside_allowed_hours' as const, retryAt: new Date(input.now.getTime() + 15 * 60_000) };
+  if (input.sentToday >= input.policy.messagesPerDay) return { allowed: false as const, reason: 'daily_limit' as const, retryAt: new Date(input.now.getTime() + 60 * 60_000) };
+  if (input.sentLastHour >= input.policy.messagesPerHour) return { allowed: false as const, reason: 'hourly_limit' as const, retryAt: new Date(input.now.getTime() + 5 * 60_000) };
+  return { allowed: true as const };
+}
+
 export function businessWhere(q: any): any {
   const where: any = {};
   if (q.search) where.OR = [{ name: { contains: q.search, mode: 'insensitive' } }, { address: { contains: q.search, mode: 'insensitive' } }];
