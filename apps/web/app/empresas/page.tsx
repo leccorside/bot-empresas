@@ -249,7 +249,7 @@ export default function Businesses() {
       <button disabled={Boolean(exportBusy)} className="btn secondary" onClick={() => createExport('CSV')}>{exportBusy === 'CSV' ? 'Gerando CSV…' : 'Exportar CSV'}</button><button disabled={Boolean(exportBusy)} className="btn secondary" onClick={() => createExport('XLSX')}>{exportBusy === 'XLSX' ? 'Gerando XLSX…' : 'Exportar XLSX'}</button>
     </div>
     {batch && <section className="card">
-      <div className="filtersHeader"><h2 className="sectionTitle">Geração de insights em lote</h2><Status value={batch.status} /></div>
+      <div className="filtersHeader"><h2 className="sectionTitle">Geração de insights em lote {batch.source === 'AUTOMATIC' ? 'automática' : 'manual'}</h2><Status value={batch.status} /></div>
       <div className="tableHint">{batch.processedCount}/{batch.totalBusinesses} processadas · {batch.generatedCount} geradas · {batch.failedCount} falharam{batch.errorMessage ? ` · ${batch.errorMessage}` : ''}</div>
       {['WAITING', 'ACTIVE', 'RECOVERING'].includes(batch.status) && <div className="rowActions" style={{ marginTop: 8 }}><button className="btn secondary sm" onClick={cancelInsightBatch}>Cancelar lote</button></div>}
       {batch.status === 'COMPLETED' && <div className="rowActions" style={{ marginTop: 8 }}><button className="btn secondary sm" onClick={() => load()}>Atualizar lista</button></div>}

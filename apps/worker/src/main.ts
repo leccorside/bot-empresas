@@ -212,13 +212,14 @@ async function processInsightBatch(job:Job<{batchId:string}>){
   const batch=await prisma.insightBatch.findUnique({where:{id:job.data.batchId}});
   if(!batch||['COMPLETED','CANCELLED'].includes(batch.status))return;
   await prisma.insightBatch.update({where:{id:batch.id},data:{status:'ACTIVE',startedAt:batch.startedAt??new Date()}});
-  const where={...businessWhere(batch.filters as any),...(batch.onlyMissing?{insight:null}:{})};
+  const storedFilters=(batch.filters??{}) as any;const {businessIds,...filters}=storedFilters;
+  const where={...businessWhere(filters),...(Array.isArray(businessIds)&&businessIds.length?{id:{in:businessIds}}:{}),...(batch.onlyMissing?{insight:null}:{})};
   const businesses=await prisma.business.findMany({where,orderBy:{leadScore:'desc'},take:batch.totalBusinesses});
   const provider=new AiInsightProvider();
   try{
     for(const business of businesses){
       const current=await prisma.insightBatch.findUnique({where:{id:batch.id},select:{status:true}});
-      if(current?.status==='CANCELLED'){batchLog.warn('insight batch cancelled');return}
+      if(current?.status==='CANCELLED'){if(Array.isArray(businessIds))await prisma.business.updateMany({where:{id:{in:businessIds}},data:{aiInsightQueuedAt:null}});batchLog.warn('insight batch cancelled');return}
       try{
         const result=await provider.generateLeadInsight({name:business.name,category:business.category,city:business.city,state:business.state,siteStatus:business.siteStatus,hasWebsite:Boolean(business.website),reviewsCount:business.reviewsCount??0,rating:business.rating,leadScore:business.leadScore,technologies:(business.technologies as string[])??[]});
         await prisma.businessInsight.upsert({where:{businessId:business.id},update:{summary:result.summary,suggestedPitch:result.suggestedPitch,model:result.model,approved:false,suggestedScore:result.suggestedScore,scoreJustification:result.scoreJustification,scoreApplied:false,generatedAt:new Date()},create:{businessId:business.id,summary:result.summary,suggestedPitch:result.suggestedPitch,model:result.model,suggestedScore:result.suggestedScore,scoreJustification:result.scoreJustification}});
@@ -226,12 +227,19 @@ async function processInsightBatch(job:Job<{batchId:string}>){
       }catch(error:any){
         batchLog.warn({businessId:business.id,error:error.message},'insight batch item failed');
         await prisma.insightBatch.update({where:{id:batch.id},data:{processedCount:{increment:1},failedCount:{increment:1}}});
-      }
+      }finally{await prisma.business.updateMany({where:{id:business.id},data:{aiInsightQueuedAt:null}})}
     }
-    await prisma.insightBatch.update({where:{id:batch.id},data:{status:'COMPLETED',completedAt:new Date()}});
+    await prisma.$transaction([
+      prisma.insightBatch.update({where:{id:batch.id},data:{status:'COMPLETED',completedAt:new Date()}}),
+      prisma.jobRecord.updateMany({where:{idempotencyKey:`insight-batch:${batch.id}`},data:{state:'COMPLETED',completedAt:new Date(),errorMessage:null}}),
+    ]);
     batchLog.info({total:businesses.length},'insight batch completed');
   }catch(error:any){
-    await prisma.insightBatch.update({where:{id:batch.id},data:{status:'FAILED',errorMessage:error.message}}).catch(()=>{});
+    await prisma.$transaction([
+      prisma.insightBatch.update({where:{id:batch.id},data:{status:'FAILED',errorMessage:error.message}}),
+      prisma.business.updateMany({where:{id:{in:Array.isArray(businessIds)?businessIds:[]}},data:{aiInsightQueuedAt:null}}),
+      prisma.jobRecord.updateMany({where:{idempotencyKey:`insight-batch:${batch.id}`},data:{state:'FAILED',errorMessage:error.message}}),
+    ]).catch(()=>{});
     batchLog.error({error:error.message},'insight batch failed');
     throw error;
   }

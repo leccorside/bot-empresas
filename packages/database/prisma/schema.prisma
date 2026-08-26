@@ -327,10 +327,12 @@ model Business {
   messages CampaignMessage[]
   suppressions ContactSuppression[]
   insight BusinessInsight?
+  aiInsightQueuedAt DateTime?
   @@unique([provider, providerId])
   @@index([city, state, category])
   @@index([leadScore, leadStatus])
   @@index([normalizedName, normalizedPhone, normalizedAddress])
+  @@index([aiInsightQueuedAt])
 }
 
 model BusinessInsight {
@@ -352,6 +354,7 @@ model BusinessInsight {
 model InsightBatch {
   id String @id @default(cuid())
   filters Json @default("{}")
+  source String @default("MANUAL")
   onlyMissing Boolean @default(true)
   status JobState @default(WAITING)
   totalBusinesses Int @default(0)
